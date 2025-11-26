@@ -9,8 +9,6 @@ mod payload;
 #[command(version = "0.1.0")]
 #[command(about = "A command-line tool for converting financial data formats", long_about = None)]
 
-
-
 struct Options {
     // Define command-line options here
     #[arg(short, long)]
@@ -20,7 +18,6 @@ struct Options {
     // #[arg(short, long)]
     // format: Option<String>,
 }
-
 
 // fn parse_sheet(sheet: &Sheet) {
 //     for (row, _d) in sheet.iter_rows((0,0)..(10,5)) {
@@ -97,7 +94,7 @@ struct Row {
 //        let amount = extract_amount(sheet, row_idx, 3).unwrap_or(0.0);
 //        let category = extract_category(sheet, row_idx, 4).unwrap_or("".to_string());
 //        let notes = extract_notes(sheet, row_idx, 5).unwrap_or("".to_string());
-       
+
 //        println!("Date: {}, Amount: {}, Category: {}, Notes: {}", date.unwrap(), amount, category, notes);
 //     }
 // }
@@ -105,7 +102,10 @@ struct Row {
 fn main() {
     let opts = Options::parse();
     println!("Input: {}", opts.input.display());
-    println!("Output: {:?}", opts.output.as_ref().map(|p| p.display().to_string()));
+    println!(
+        "Output: {:?}",
+        opts.output.as_ref().map(|p| p.display().to_string())
+    );
     // println!("Format: {:?}", opts.format);
 
     let workbook = spreadsheet_ods::read_ods(&opts.input).expect("Failed to read ODS file");
@@ -113,5 +113,12 @@ fn main() {
     workbook.iter_sheets().for_each(|sheet| {
         println!("Sheet: {}", sheet.name());
     });
-    parsers::save::parse(workbook.sheet(1));
+    let transactions = parsers::save::parse(workbook.sheet(1));
+
+    let payload = payload::PayloadBuilder::new()
+        .add_transactions(transactions)
+        .build();
+
+    let json = serde_json::to_string_pretty(&payload).expect("Failed to serialize");
+    println!("{}", json);
 }

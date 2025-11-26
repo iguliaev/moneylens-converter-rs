@@ -1,7 +1,5 @@
-
-
-use spreadsheet_ods::{Sheet};
 use crate::payload::types::{Transaction, TransactionType};
+use spreadsheet_ods::Sheet;
 
 fn extract_date(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
     match sheet.value(row, col) {
@@ -42,7 +40,7 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
     const BANK_ACCOUNT_NAME: &str = "Default Account";
     const FIRST_DATA_ROW: u32 = 2;
     const MAX_ROWS: u32 = 1000;
-    
+
     // Column indices for the Savings sheet
     const COL_DATE: u32 = 2;
     const COL_AMOUNT: u32 = 3;
@@ -61,26 +59,29 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
             }
             continue;
         };
-        
+
         // Reset empty counter when we find a valid date
         empty_date_count = 0;
-        
+
         // Extract and validate required fields
         let Some(amount) = extract_amount(sheet, row_idx, COL_AMOUNT) else {
             eprintln!("Warning: Skipping row {} - missing amount", row_idx);
             continue;
         };
-        
+
         let Some(category) = extract_text(sheet, row_idx, COL_CATEGORY) else {
             eprintln!("Warning: Skipping row {} - missing category", row_idx);
             continue;
         };
-        
+
         // Extract optional fields
         let notes = extract_text(sheet, row_idx, COL_NOTES);
-       
-        println!("Date: {}, Amount: {}, Category: {}, Notes: {:?}", date, amount, category, notes);
-       
+
+        println!(
+            "Date: {}, Amount: {}, Category: {}, Notes: {:?}",
+            date, amount, category, notes
+        );
+
         let transaction = Transaction {
             date,
             type_: TransactionType::Save,
