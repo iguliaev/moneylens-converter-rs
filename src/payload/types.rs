@@ -20,6 +20,7 @@ impl TransactionType {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Category {
     pub name: String,
+    #[serde(rename = "type")]
     pub type_: TransactionType,
     pub description: Option<String>,
 }
@@ -39,6 +40,7 @@ pub struct Tag {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Transaction {
     pub date: String,
+    #[serde(rename = "type")]
     pub type_: TransactionType,
     pub category: String,
     pub bank_account: String,
