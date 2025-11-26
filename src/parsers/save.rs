@@ -3,12 +3,6 @@
 use spreadsheet_ods::{Sheet};
 use crate::payload::types::{Transaction, TransactionType};
 
-// Column indices for the Savings sheet
-const COL_DATE: u32 = 2;
-const COL_AMOUNT: u32 = 3;
-const COL_CATEGORY: u32 = 4;
-const COL_NOTES: u32 = 5;
-
 fn extract_date(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
     match sheet.value(row, col) {
         spreadsheet_ods::Value::Empty => None,
@@ -49,6 +43,12 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
     const FIRST_DATA_ROW: u32 = 2;
     const MAX_ROWS: u32 = 1000;
     
+    // Column indices for the Savings sheet
+    const COL_DATE: u32 = 2;
+    const COL_AMOUNT: u32 = 3;
+    const COL_CATEGORY: u32 = 4;
+    const COL_NOTES: u32 = 5;
+
     let mut empty_date_count = 0;
     let mut transactions = Vec::new();
 
