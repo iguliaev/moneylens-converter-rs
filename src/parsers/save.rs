@@ -3,6 +3,11 @@
 use spreadsheet_ods::{Sheet};
 use crate::payload::types::{Transaction, TransactionType};
 
+// Column indices for the Savings sheet
+const COL_DATE: u32 = 2;
+const COL_AMOUNT: u32 = 3;
+const COL_CATEGORY: u32 = 4;
+const COL_NOTES: u32 = 5;
 
 fn extract_date(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
     match sheet.value(row, col) {
@@ -22,18 +27,10 @@ fn extract_amount(sheet: &Sheet, row: u32, col: u32) -> Option<f64> {
     }
 }
 
-fn extract_category(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
+fn extract_text(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
     match sheet.value(row, col) {
         spreadsheet_ods::Value::Empty => None,
-        spreadsheet_ods::Value::Text(s) => Some(s.to_string()),
-        _ => None,
-    }
-}
-
-fn extract_notes(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
-    match sheet.value(row, col) {
-        spreadsheet_ods::Value::Empty => None,
-        spreadsheet_ods::Value::Text(s) => Some(s.to_string()),
+        spreadsheet_ods::Value::Text(s) if !s.is_empty() => Some(s.to_string()),
         _ => None,
     }
 }
@@ -49,35 +46,51 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
 
     const EMPTY_DATE_THRESHOLD: usize = 5;
     const BANK_ACCOUNT_NAME: &str = "Default Account";
+    const FIRST_DATA_ROW: u32 = 2;
+    const MAX_ROWS: u32 = 1000;
+    
     let mut empty_date_count = 0;
-
     let mut transactions = Vec::new();
 
-    for row_idx in 2..1000 {
-        let date = extract_date(sheet, row_idx, 2);
-        if date.is_none() {
+    for row_idx in FIRST_DATA_ROW..MAX_ROWS {
+        // Check if we've reached the end of data
+        let Some(date) = extract_date(sheet, row_idx, COL_DATE) else {
             empty_date_count += 1;
             if empty_date_count >= EMPTY_DATE_THRESHOLD {
                 break;
             }
             continue;
-       }
-       let amount = extract_amount(sheet, row_idx, 3).unwrap_or(0.0);
-       let category = extract_category(sheet, row_idx, 4).unwrap_or("".to_string());
-       let notes = extract_notes(sheet, row_idx, 5).unwrap_or("".to_string());
+        };
+        
+        // Reset empty counter when we find a valid date
+        empty_date_count = 0;
+        
+        // Extract and validate required fields
+        let Some(amount) = extract_amount(sheet, row_idx, COL_AMOUNT) else {
+            eprintln!("Warning: Skipping row {} - missing amount", row_idx);
+            continue;
+        };
+        
+        let Some(category) = extract_text(sheet, row_idx, COL_CATEGORY) else {
+            eprintln!("Warning: Skipping row {} - missing category", row_idx);
+            continue;
+        };
+        
+        // Extract optional fields
+        let notes = extract_text(sheet, row_idx, COL_NOTES);
        
-       println!("Date: {}, Amount: {}, Category: {}, Notes: {}", date.clone().unwrap(), amount, category, notes);
+        println!("Date: {}, Amount: {}, Category: {}, Notes: {:?}", date, amount, category, notes);
        
-       let transaction = Transaction {
-           date: date.clone().unwrap(),
-           type_: TransactionType::Save,
-           category,
-           bank_account: BANK_ACCOUNT_NAME.to_string(),
-           amount,
-           tags: None,
-           notes: if notes.is_empty() { None } else { Some(notes) },
-       };
-       transactions.push(transaction);
+        let transaction = Transaction {
+            date,
+            type_: TransactionType::Save,
+            category,
+            bank_account: BANK_ACCOUNT_NAME.to_string(),
+            amount,
+            tags: None,
+            notes,
+        };
+        transactions.push(transaction);
     }
     transactions
 }
