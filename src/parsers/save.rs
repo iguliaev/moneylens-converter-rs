@@ -65,22 +65,19 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
 
         // Extract and validate required fields
         let Some(amount) = extract_amount(sheet, row_idx, COL_AMOUNT) else {
-            eprintln!("Warning: Skipping row {} - missing amount", row_idx);
+            eprintln!("Warning: Skipping row {row_idx} - missing amount");
             continue;
         };
 
         let Some(category) = extract_text(sheet, row_idx, COL_CATEGORY) else {
-            eprintln!("Warning: Skipping row {} - missing category", row_idx);
+            eprintln!("Warning: Skipping row {row_idx} - missing category");
             continue;
         };
 
         // Extract optional fields
         let notes = extract_text(sheet, row_idx, COL_NOTES);
 
-        println!(
-            "Date: {}, Amount: {}, Category: {}, Notes: {:?}",
-            date, amount, category, notes
-        );
+        println!("Date: {date}, Amount: {amount}, Category: {category}, Notes: {notes:?}",);
 
         let transaction = Transaction {
             date,

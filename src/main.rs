@@ -11,7 +11,7 @@ fn main() {
     );
 
     if let Err(e) = run(opts) {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         std::process::exit(1);
     }
 }

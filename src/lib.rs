@@ -15,12 +15,12 @@ pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
     });
     let transactions = parsers::save::parse(workbook.sheet(1));
 
-    let payload = payload::PayloadBuilder::new()
+    let payload = payload::PayloadBuilder::default()
         .add_transactions(transactions)
         .build();
 
     let json = serde_json::to_string_pretty(&payload).expect("Failed to serialize");
-    println!("{}", json);
+    println!("{json}");
 
     Ok(())
 }
