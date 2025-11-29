@@ -1,5 +1,10 @@
 use spreadsheet_ods::Sheet;
 
+const MONTH_NAMES: [&str; 12] = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+];
+
 pub(super) fn extract_date(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
     match sheet.value(row, col) {
         spreadsheet_ods::Value::Empty => None,
@@ -24,4 +29,8 @@ pub(super) fn extract_text(sheet: &Sheet, row: u32, col: u32) -> Option<String> 
         spreadsheet_ods::Value::Text(s) if !s.is_empty() => Some(s.to_string()),
         _ => None,
     }
+}
+
+pub(super) fn is_month(value: &str) -> bool {
+    MONTH_NAMES.contains(&value)
 }
