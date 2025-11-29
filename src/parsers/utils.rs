@@ -1,0 +1,27 @@
+use spreadsheet_ods::Sheet;
+
+pub(super) fn extract_date(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
+    match sheet.value(row, col) {
+        spreadsheet_ods::Value::Empty => None,
+        spreadsheet_ods::Value::DateTime(dt) => Some(dt.date().to_string()),
+        spreadsheet_ods::Value::Text(s) => Some(s.to_string()),
+        _ => None,
+    }
+}
+
+pub(super) fn extract_amount(sheet: &Sheet, row: u32, col: u32) -> Option<f64> {
+    match sheet.value(row, col) {
+        spreadsheet_ods::Value::Empty => None,
+        spreadsheet_ods::Value::Number(f) => Some(*f),
+        spreadsheet_ods::Value::Currency(c, _) => Some(*c),
+        _ => None,
+    }
+}
+
+pub(super) fn extract_text(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
+    match sheet.value(row, col) {
+        spreadsheet_ods::Value::Empty => None,
+        spreadsheet_ods::Value::Text(s) if !s.is_empty() => Some(s.to_string()),
+        _ => None,
+    }
+}

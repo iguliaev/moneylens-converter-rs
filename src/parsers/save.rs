@@ -1,31 +1,6 @@
+use super::utils;
 use crate::payload::types::{Transaction, TransactionType};
 use spreadsheet_ods::Sheet;
-
-fn extract_date(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
-    match sheet.value(row, col) {
-        spreadsheet_ods::Value::Empty => None,
-        spreadsheet_ods::Value::DateTime(dt) => Some(dt.date().to_string()),
-        spreadsheet_ods::Value::Text(s) => Some(s.to_string()),
-        _ => None,
-    }
-}
-
-fn extract_amount(sheet: &Sheet, row: u32, col: u32) -> Option<f64> {
-    match sheet.value(row, col) {
-        spreadsheet_ods::Value::Empty => None,
-        spreadsheet_ods::Value::Number(f) => Some(*f),
-        spreadsheet_ods::Value::Currency(c, _) => Some(*c),
-        _ => None,
-    }
-}
-
-fn extract_text(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
-    match sheet.value(row, col) {
-        spreadsheet_ods::Value::Empty => None,
-        spreadsheet_ods::Value::Text(s) if !s.is_empty() => Some(s.to_string()),
-        _ => None,
-    }
-}
 
 pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
     assert!(sheet.name() == "Savings", "Expected sheet named 'Savings'");
@@ -52,7 +27,7 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
 
     for row_idx in FIRST_DATA_ROW..MAX_ROWS {
         // Check if we've reached the end of data
-        let Some(date) = extract_date(sheet, row_idx, COL_DATE) else {
+        let Some(date) = utils::extract_date(sheet, row_idx, COL_DATE) else {
             empty_date_count += 1;
             if empty_date_count >= EMPTY_DATE_THRESHOLD {
                 break;
@@ -64,18 +39,18 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
         empty_date_count = 0;
 
         // Extract and validate required fields
-        let Some(amount) = extract_amount(sheet, row_idx, COL_AMOUNT) else {
+        let Some(amount) = utils::extract_amount(sheet, row_idx, COL_AMOUNT) else {
             eprintln!("Warning: Skipping row {row_idx} - missing amount");
             continue;
         };
 
-        let Some(category) = extract_text(sheet, row_idx, COL_CATEGORY) else {
+        let Some(category) = utils::extract_text(sheet, row_idx, COL_CATEGORY) else {
             eprintln!("Warning: Skipping row {row_idx} - missing category");
             continue;
         };
 
         // Extract optional fields
-        let notes = extract_text(sheet, row_idx, COL_NOTES);
+        let notes = utils::extract_text(sheet, row_idx, COL_NOTES);
 
         println!("Date: {date}, Amount: {amount}, Category: {category}, Notes: {notes:?}",);
 
