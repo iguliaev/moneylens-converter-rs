@@ -1,6 +1,5 @@
 use super::utils;
 use crate::payload::types::{Transaction, TransactionType};
-use clap::builder::NonEmptyStringValueParser;
 use spreadsheet_ods::Sheet;
 
 pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
@@ -49,7 +48,9 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
 
         let annotation = utils::extract_annotation(sheet, row_idx, COL_AMOUNT);
 
-        println!("Date: {date}, Category: {category}, Amount: {amount}, Annotation: {annotation:?}");
+        println!(
+            "Date: {date}, Category: {category}, Amount: {amount}, Annotation: {annotation:?}"
+        );
 
         let transaction = Transaction {
             date: date.clone(),

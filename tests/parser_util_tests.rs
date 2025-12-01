@@ -1,4 +1,4 @@
-use moneylens_converter_rs::{parsers, payload::types::TransactionType};
+use moneylens_converter_rs::parsers;
 use spreadsheet_ods;
 
 #[test]
