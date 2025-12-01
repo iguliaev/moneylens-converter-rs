@@ -2,11 +2,15 @@ use moneylens_converter_rs::{parsers, payload::types::TransactionType};
 use spreadsheet_ods;
 
 #[test]
-fn test_parse_savings_sheet() {
+fn test_extract_annotation_text() {
     let workbook = spreadsheet_ods::read_ods("tests/data/spend_earn_transactions_example.ods")
         .expect("Failed to read ODS file");
     let sheet = workbook.sheet(0);
-    let transactions = parsers::earn::parse(sheet);
+    let annotation = parsers::utils::extract_annotation(sheet, 15, 1);
 
-    assert_eq!(2, transactions.len(), "Expected 2 transactions parsed");
+    assert_eq!(
+        Some("Earn Annotation".to_string()),
+        annotation,
+        "Expected annotation text at row 1, col 3"
+    );
 }
