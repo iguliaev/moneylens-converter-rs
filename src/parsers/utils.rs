@@ -58,3 +58,17 @@ pub fn extract_annotation(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
 pub(super) fn is_month(value: &str) -> bool {
     MONTH_NAMES.contains(&value)
 }
+
+pub(super) fn bank_account_symbol_to_name(symbol: Option<String>) -> String {
+    match symbol {
+        Some(name) => match name.as_str() {
+            "X" => "AmEx".to_string(),
+            "B" => "Barclays".to_string(),
+            "W" => "Wise Virtual".to_string(),
+            "M" => "Monzo".to_string(),
+            "A" => "Wise Physical".to_string(),
+            _ => "Unknown".to_string(),
+        },
+        None => "NatWest".to_string(),
+    }
+}
