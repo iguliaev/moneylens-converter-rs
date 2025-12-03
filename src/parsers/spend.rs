@@ -2,6 +2,10 @@ use super::utils;
 use crate::payload::types::{Transaction, TransactionType};
 use spreadsheet_ods::Sheet;
 
+pub fn can_parse(sheet: &Sheet) -> bool {
+    utils::is_month(sheet.name())
+}
+
 pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
     assert!(
         utils::is_month(sheet.name()),

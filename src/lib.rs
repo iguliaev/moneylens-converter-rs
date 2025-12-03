@@ -10,14 +10,23 @@ use spreadsheet_ods::{self};
 pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
     let workbook = spreadsheet_ods::read_ods(&opts.input).expect("Failed to read ODS file");
     println!("Workbook has {} sheets", workbook.num_sheets());
-    workbook.iter_sheets().for_each(|sheet| {
-        println!("Sheet: {}", sheet.name());
-    });
-    let transactions = parsers::save::parse(workbook.sheet(1));
 
-    let payload = payload::PayloadBuilder::default()
-        .add_transactions(transactions)
-        .build();
+    let mut payload_builder = payload::PayloadBuilder::default();
+
+    for sheet in workbook.iter_sheets() {
+        if parsers::save::can_parse(sheet) {
+            payload_builder.add_transactions(parsers::save::parse(sheet));
+        }
+        if parsers::earn::can_parse(sheet) {
+            payload_builder.add_transactions(parsers::earn::parse(sheet));
+        }
+        if parsers::spend::can_parse(sheet) {
+            payload_builder.add_transactions(parsers::spend::parse(sheet));
+        }
+        println!("Sheet: {}", sheet.name());
+    }
+
+    let payload = payload_builder.build();
 
     let json = serde_json::to_string_pretty(&payload).expect("Failed to serialize");
     println!("{json}");

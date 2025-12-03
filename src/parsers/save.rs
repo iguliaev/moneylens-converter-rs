@@ -2,6 +2,10 @@ use super::utils;
 use crate::payload::types::{Transaction, TransactionType};
 use spreadsheet_ods::Sheet;
 
+pub fn can_parse(sheet: &Sheet) -> bool {
+    sheet.name() == "Savings"
+}
+
 pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
     assert!(sheet.name() == "Savings", "Expected sheet named 'Savings'");
 
