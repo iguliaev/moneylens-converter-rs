@@ -667,6 +667,7 @@ name = "moneylens-converter-rs"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "once_cell",
  "serde",
  "serde_json",
  "spreadsheet-ods",
