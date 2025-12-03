@@ -1,20 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+#[serde(rename_all = "lowercase")]
 pub enum TransactionType {
     Spend,
     Save,
     Earn,
-}
-
-impl TransactionType {
-    pub fn as_str(&self) -> &str {
-        match self {
-            TransactionType::Spend => "spend",
-            TransactionType::Save => "save",
-            TransactionType::Earn => "earn",
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
