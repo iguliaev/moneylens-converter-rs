@@ -9,7 +9,7 @@ pub struct PayloadBuilder {
 }
 
 impl PayloadBuilder {
-    pub fn add_transactions(&mut self, transactions: Vec<super::types::Transaction>) -> &mut Self {
+    pub fn add_transactions(mut self, transactions: Vec<super::types::Transaction>) -> Self {
         transactions.iter().for_each(|tx| {
             // Add unique categories
             if !self.category_set.contains(&tx.category) {
@@ -48,8 +48,8 @@ impl PayloadBuilder {
         self
     }
 
-    pub fn build(&self) -> Payload {
-        self.payload.clone()
+    pub fn build(self) -> Payload {
+        self.payload
     }
 }
 
