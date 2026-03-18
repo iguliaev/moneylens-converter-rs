@@ -101,7 +101,12 @@ fn extract_month_number(date: &str) -> Option<u8> {
         return None;
     }
 
-    month.parse::<u8>().ok()
+    let month_num = month.parse::<u8>().ok()?;
+    if (1..=12).contains(&month_num) {
+        Some(month_num)
+    } else {
+        None
+    }
 }
 
 pub(super) fn bank_account_symbol_to_name(symbol: Option<String>) -> String {
