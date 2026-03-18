@@ -1,4 +1,6 @@
+use once_cell::sync::Lazy;
 use spreadsheet_ods::Sheet;
+use std::collections::HashMap;
 
 const MONTH_NAMES: [&str; 12] = [
     "January",
@@ -15,6 +17,15 @@ const MONTH_NAMES: [&str; 12] = [
     "December",
 ];
 
+static BANK_ACCOUNT_MAP: Lazy<HashMap<&str, &str>> = Lazy::new(|| {
+    HashMap::from([
+        ("X", "AmEx"),
+        ("B", "Barclays"),
+        ("W", "Wise Virtual"),
+        ("M", "Monzo"),
+        ("A", "Wise Physical"),
+    ])
+});
 pub(super) fn extract_date(sheet: &Sheet, row: u32, col: u32) -> Option<String> {
     match sheet.value(row, col) {
         spreadsheet_ods::Value::Empty => None,
@@ -61,14 +72,10 @@ pub(super) fn is_month(value: &str) -> bool {
 
 pub(super) fn bank_account_symbol_to_name(symbol: Option<String>) -> String {
     match symbol {
-        Some(name) => match name.as_str() {
-            "X" => "AmEx".to_string(),
-            "B" => "Barclays".to_string(),
-            "W" => "Wise Virtual".to_string(),
-            "M" => "Monzo".to_string(),
-            "A" => "Wise Physical".to_string(),
-            _ => "Unknown".to_string(),
-        },
+        Some(ref name) => BANK_ACCOUNT_MAP
+            .get(name.as_str())
+            .unwrap_or(&"Unknown")
+            .to_string(),
         None => "NatWest".to_string(),
     }
 }
