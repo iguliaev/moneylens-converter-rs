@@ -9,6 +9,9 @@ fn main() {
         "Output: {:?}",
         opts.output.as_ref().map(|p| p.display().to_string())
     );
+    if let Some(month) = opts.month {
+        println!("Month: {month}");
+    }
 
     if let Err(e) = run(opts) {
         eprintln!("Error: {e}");
