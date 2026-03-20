@@ -43,7 +43,7 @@ mod tests {
 
         assert!(result.is_err(), "month 13 should be rejected");
 
-        let err = result.unwrap_err();
+        let err = result.err().expect("month 13 should produce an error");
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 }
