@@ -31,15 +31,13 @@ impl PayloadBuilder {
             }
 
             // Add unique tags
-            if let Some(tags) = &tx.tags {
-                for tag in tags {
-                    if !self.tag_set.contains(tag) {
-                        self.payload.tags.push(super::types::Tag {
-                            name: tag.clone(),
-                            description: None,
-                        });
-                        self.tag_set.insert(tag.clone());
-                    }
+            for tag in &tx.tags {
+                if !self.tag_set.contains(tag) {
+                    self.payload.tags.push(super::types::Tag {
+                        name: tag.clone(),
+                        description: None,
+                    });
+                    self.tag_set.insert(tag.clone());
                 }
             }
         });
@@ -67,7 +65,7 @@ mod tests {
                 category: "Food".to_string(),
                 bank_account: "Checking".to_string(),
                 amount: 50.0,
-                tags: Some(vec!["Groceries".to_string()]),
+                tags: vec!["Groceries".to_string()],
                 notes: Some("Weekly groceries".to_string()),
             },
             Transaction {
@@ -76,7 +74,7 @@ mod tests {
                 category: "Salary".to_string(),
                 bank_account: "Checking".to_string(),
                 amount: 2000.0,
-                tags: None,
+                tags: vec![],
                 notes: Some("Monthly salary".to_string()),
             },
         ];

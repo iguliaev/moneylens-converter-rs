@@ -63,7 +63,7 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
             bank_account: DEFAULT_BANK_ACCOUNT_NAME.to_string(),
             amount,
             notes: annotation,
-            tags: None,
+            tags: vec![],
         };
 
         transactions.push(transaction);
