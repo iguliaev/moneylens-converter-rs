@@ -62,10 +62,7 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
             "Date: {date}, Amount: {amount}, Category: {category}, Bank Account: {bank_account}, Tags: {tag:?}, Annotation: {annotation:?}",
         );
 
-        let mut tags = Vec::new();
-        if let Some(tag_value) = tag {
-            tags.push(tag_value);
-        }
+        let tags: Vec<String> = tag.into_iter().collect();
 
         let transaction = Transaction {
             date,
@@ -74,7 +71,7 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
             bank_account,
             amount,
             notes: annotation,
-            tags: if tags.is_empty() { None } else { Some(tags) },
+            tags,
         };
 
         transactions.push(transaction);

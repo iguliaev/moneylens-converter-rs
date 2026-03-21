@@ -83,7 +83,7 @@ mod tests {
             category: "Food".to_string(),
             bank_account: "NatWest".to_string(),
             amount: 10.0,
-            tags: Some(vec!["Groceries".to_string()]),
+            tags: vec!["Groceries".to_string()],
             notes: None,
         };
         let february_salary = Transaction {
@@ -92,7 +92,7 @@ mod tests {
             category: "Salary".to_string(),
             bank_account: "Checking".to_string(),
             amount: 1000.0,
-            tags: Some(vec!["Payroll".to_string()]),
+            tags: vec!["Payroll".to_string()],
             notes: None,
         };
 
@@ -127,6 +127,8 @@ mod tests {
         let json = fs::read_to_string(&output_path).expect("output json should be written");
         fs::remove_file(&output_path).expect("temporary output file should be removed");
 
+        assert!(json.contains("\"tags\": []"));
+
         let payload: Payload = serde_json::from_str(&json).expect("payload should deserialize");
 
         assert_eq!(payload.transactions.len(), 2);
@@ -139,5 +141,11 @@ mod tests {
         assert_eq!(payload.categories.len(), 1);
         assert_eq!(payload.categories[0].name, "Other");
         assert!(payload.tags.is_empty());
+        assert!(
+            payload
+                .transactions
+                .iter()
+                .all(|transaction| transaction.tags.is_empty())
+        );
     }
 }

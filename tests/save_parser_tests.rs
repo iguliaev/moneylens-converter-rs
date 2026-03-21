@@ -14,11 +14,13 @@ fn test_parse_savings_sheet() {
     assert_eq!(transactions[0].amount, 100.00);
     assert_eq!(transactions[0].category, "Other".to_string());
     assert_eq!(transactions[0].notes, Some("Note 01".to_string()));
+    assert!(transactions[0].tags.is_empty());
     assert_eq!(transactions[0].type_, TransactionType::Save);
 
     assert_eq!(transactions[4].date, "2025-03-01");
     assert_eq!(transactions[4].amount, 500.00);
     assert_eq!(transactions[4].category, "Other".to_string());
     assert_eq!(transactions[4].notes, None);
+    assert!(transactions[4].tags.is_empty());
     assert_eq!(transactions[4].type_, TransactionType::Save);
 }

@@ -36,7 +36,7 @@ pub struct Transaction {
     pub category: String,
     pub bank_account: String,
     pub amount: f64,
-    pub tags: Option<Vec<String>>,
+    pub tags: Vec<String>,
     pub notes: Option<String>,
 }
 
