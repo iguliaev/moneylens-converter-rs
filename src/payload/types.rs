@@ -8,7 +8,7 @@ pub enum TransactionType {
     Earn,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Category {
     pub name: String,
     #[serde(rename = "type")]

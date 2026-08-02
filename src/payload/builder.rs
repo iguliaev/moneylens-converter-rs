@@ -3,8 +3,7 @@ use super::types::Payload;
 #[derive(Default)]
 pub struct PayloadBuilder {
     payload: Payload,
-    category_set:
-        std::collections::HashSet<(super::types::TransactionType, Option<String>, String)>,
+    category_set: std::collections::HashSet<super::types::Category>,
     bank_account_set: std::collections::HashSet<String>,
     tag_set: std::collections::HashSet<String>,
 }
@@ -28,25 +27,25 @@ impl PayloadBuilder {
             let (parent, name) = split_category(&tx.category);
 
             if let Some(ref parent_name) = parent {
-                let parent_key = (tx.type_.clone(), None, parent_name.clone());
-                if self.category_set.insert(parent_key) {
-                    self.payload.categories.push(super::types::Category {
-                        name: parent_name.clone(),
-                        type_: tx.type_.clone(),
-                        description: None,
-                        parent: None,
-                    });
+                let parent_category = super::types::Category {
+                    name: parent_name.clone(),
+                    type_: tx.type_.clone(),
+                    description: None,
+                    parent: None,
+                };
+                if self.category_set.insert(parent_category.clone()) {
+                    self.payload.categories.push(parent_category);
                 }
             }
 
-            let child_key = (tx.type_.clone(), parent.clone(), name.clone());
-            if self.category_set.insert(child_key) {
-                self.payload.categories.push(super::types::Category {
-                    name,
-                    type_: tx.type_.clone(),
-                    description: None,
-                    parent,
-                });
+            let child_category = super::types::Category {
+                name,
+                type_: tx.type_.clone(),
+                description: None,
+                parent,
+            };
+            if self.category_set.insert(child_category.clone()) {
+                self.payload.categories.push(child_category);
             }
 
             // Add unique bank accounts
