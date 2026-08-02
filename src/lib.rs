@@ -140,6 +140,7 @@ mod tests {
         );
         assert_eq!(payload.categories.len(), 1);
         assert_eq!(payload.categories[0].name, "Other");
+        assert_eq!(payload.categories[0].parent, None);
         assert!(payload.tags.is_empty());
         assert!(
             payload
