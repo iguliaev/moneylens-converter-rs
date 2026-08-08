@@ -14,7 +14,7 @@ fn test_parse_earnings() {
     assert_eq!(transactions[0].amount, 100.00);
     assert_eq!(transactions[0].category, "Food".to_string());
     assert_eq!(transactions[0].notes, None);
-    assert_eq!(transactions[0].type_, TransactionType::Spend);
+    assert_eq!(transactions[0].transaction_type, TransactionType::Spend);
     assert_eq!(transactions[0].bank_account, "NatWest".to_string());
     assert!(transactions[0].tags.is_empty());
 
@@ -22,7 +22,7 @@ fn test_parse_earnings() {
     assert_eq!(transactions[4].amount, 500.00);
     assert_eq!(transactions[4].category, "Vacation".to_string());
     assert_eq!(transactions[4].notes, Some("Tickets".to_string()));
-    assert_eq!(transactions[4].type_, TransactionType::Spend);
+    assert_eq!(transactions[4].transaction_type, TransactionType::Spend);
     assert_eq!(transactions[4].bank_account, "AmEx".to_string());
 
     assert_eq!(transactions[6].tags, vec!["Gas".to_string()]);
@@ -31,7 +31,7 @@ fn test_parse_earnings() {
     assert_eq!(transactions[8].amount, 150.00);
     assert_eq!(transactions[8].category, "Food".to_string());
     assert_eq!(transactions[8].notes, None);
-    assert_eq!(transactions[8].type_, TransactionType::Spend);
+    assert_eq!(transactions[8].transaction_type, TransactionType::Spend);
     assert_eq!(transactions[8].bank_account, "AmEx".to_string());
     assert!(transactions[8].tags.is_empty());
 }

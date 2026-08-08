@@ -8,11 +8,11 @@ pub enum TransactionType {
     Earn,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Category {
     pub name: String,
     #[serde(rename = "type")]
-    pub type_: TransactionType,
+    pub transaction_type: TransactionType,
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
@@ -34,7 +34,7 @@ pub struct Tag {
 pub struct Transaction {
     pub date: String,
     #[serde(rename = "type")]
-    pub type_: TransactionType,
+    pub transaction_type: TransactionType,
     pub category: String,
     pub bank_account: String,
     pub amount: f64,

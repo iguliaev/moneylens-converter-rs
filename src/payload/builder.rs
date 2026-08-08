@@ -3,9 +3,30 @@ use super::types::Payload;
 #[derive(Default)]
 pub struct PayloadBuilder {
     payload: Payload,
-    category_set: std::collections::HashSet<super::types::Category>,
+    category_set: std::collections::HashSet<CategoryKey>,
     bank_account_set: std::collections::HashSet<String>,
     tag_set: std::collections::HashSet<String>,
+}
+
+/// Dedup identity for a `Category`, matching the DB's own
+/// `(user_id, type, name, parent_id)` uniqueness constraint. Deliberately
+/// excludes `description` (and any other future `Category` field) so dedup
+/// stays tied to identity, not the full struct.
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct CategoryKey {
+    transaction_type: super::types::TransactionType,
+    parent: Option<String>,
+    name: String,
+}
+
+impl From<&super::types::Category> for CategoryKey {
+    fn from(category: &super::types::Category) -> Self {
+        Self {
+            transaction_type: category.transaction_type.clone(),
+            parent: category.parent.clone(),
+            name: category.name.clone(),
+        }
+    }
 }
 
 /// The result of splitting a transaction's category string, mirroring the
@@ -48,7 +69,10 @@ fn split_category(category: &str) -> CategorySplit {
         (true, false) => CategorySplit::Root(child),
         (false, true) => CategorySplit::Root(parent),
         (false, false) if child.contains('/') => CategorySplit::Multipath,
-        (false, false) => CategorySplit::Nested { parent, name: child },
+        (false, false) => CategorySplit::Nested {
+            parent,
+            name: child,
+        },
     }
 }
 
@@ -65,11 +89,11 @@ impl PayloadBuilder {
                 CategorySplit::Root(name) => {
                     let category = super::types::Category {
                         name: name.clone(),
-                        type_: tx.type_.clone(),
+                        transaction_type: tx.transaction_type.clone(),
                         description: None,
                         parent: None,
                     };
-                    if self.category_set.insert(category.clone()) {
+                    if self.category_set.insert(CategoryKey::from(&category)) {
                         self.payload.categories.push(category);
                     }
                     tx.category = name;
@@ -77,21 +101,24 @@ impl PayloadBuilder {
                 CategorySplit::Nested { parent, name } => {
                     let parent_category = super::types::Category {
                         name: parent.clone(),
-                        type_: tx.type_.clone(),
+                        transaction_type: tx.transaction_type.clone(),
                         description: None,
                         parent: None,
                     };
-                    if self.category_set.insert(parent_category.clone()) {
+                    if self
+                        .category_set
+                        .insert(CategoryKey::from(&parent_category))
+                    {
                         self.payload.categories.push(parent_category);
                     }
 
                     let child_category = super::types::Category {
                         name: name.clone(),
-                        type_: tx.type_.clone(),
+                        transaction_type: tx.transaction_type.clone(),
                         description: None,
                         parent: Some(parent.clone()),
                     };
-                    if self.category_set.insert(child_category.clone()) {
+                    if self.category_set.insert(CategoryKey::from(&child_category)) {
                         self.payload.categories.push(child_category);
                     }
 
@@ -155,7 +182,7 @@ mod tests {
         let transactions = vec![
             Transaction {
                 date: "2024-01-01".to_string(),
-                type_: TransactionType::Spend,
+                transaction_type: TransactionType::Spend,
                 category: "Food".to_string(),
                 bank_account: "Checking".to_string(),
                 amount: 50.0,
@@ -164,7 +191,7 @@ mod tests {
             },
             Transaction {
                 date: "2024-01-02".to_string(),
-                type_: TransactionType::Earn,
+                transaction_type: TransactionType::Earn,
                 category: "Salary".to_string(),
                 bank_account: "Checking".to_string(),
                 amount: 2000.0,
@@ -196,7 +223,7 @@ mod tests {
     fn splits_slash_separated_category_into_parent_and_child_entries() {
         let transactions = vec![Transaction {
             date: "2025-01-10".to_string(),
-            type_: TransactionType::Spend,
+            transaction_type: TransactionType::Spend,
             category: "Vacation/Accomodation".to_string(),
             bank_account: "AmEx".to_string(),
             amount: 100.0,
@@ -222,7 +249,7 @@ mod tests {
             .find(|c| c.name == "Vacation")
             .expect("parent category entry should exist");
         assert_eq!(parent.parent, None);
-        assert_eq!(parent.type_, TransactionType::Spend);
+        assert_eq!(parent.transaction_type, TransactionType::Spend);
 
         let child = payload
             .categories
@@ -230,7 +257,7 @@ mod tests {
             .find(|c| c.name == "Accomodation")
             .expect("child category entry should exist");
         assert_eq!(child.parent, Some("Vacation".to_string()));
-        assert_eq!(child.type_, TransactionType::Spend);
+        assert_eq!(child.transaction_type, TransactionType::Spend);
 
         // the transaction's own `category` field must remain the full path, unchanged
         assert!(
@@ -246,7 +273,7 @@ mod tests {
         let transactions = vec![
             Transaction {
                 date: "2025-01-01".to_string(),
-                type_: TransactionType::Save,
+                transaction_type: TransactionType::Save,
                 category: "Other".to_string(),
                 bank_account: "Default Account".to_string(),
                 amount: 10.0,
@@ -255,7 +282,7 @@ mod tests {
             },
             Transaction {
                 date: "2025-01-02".to_string(),
-                type_: TransactionType::Earn,
+                transaction_type: TransactionType::Earn,
                 category: "Other".to_string(),
                 bank_account: "Default Account".to_string(),
                 amount: 20.0,
@@ -277,13 +304,13 @@ mod tests {
             payload
                 .categories
                 .iter()
-                .any(|c| c.name == "Other" && c.type_ == TransactionType::Save)
+                .any(|c| c.name == "Other" && c.transaction_type == TransactionType::Save)
         );
         assert!(
             payload
                 .categories
                 .iter()
-                .any(|c| c.name == "Other" && c.type_ == TransactionType::Earn)
+                .any(|c| c.name == "Other" && c.transaction_type == TransactionType::Earn)
         );
     }
 
@@ -292,7 +319,7 @@ mod tests {
         let transactions = vec![
             Transaction {
                 date: "2025-01-10".to_string(),
-                type_: TransactionType::Spend,
+                transaction_type: TransactionType::Spend,
                 category: "Bills/".to_string(),
                 bank_account: "AmEx".to_string(),
                 amount: 10.0,
@@ -301,7 +328,7 @@ mod tests {
             },
             Transaction {
                 date: "2025-01-11".to_string(),
-                type_: TransactionType::Spend,
+                transaction_type: TransactionType::Spend,
                 category: "Food/   ".to_string(),
                 bank_account: "AmEx".to_string(),
                 amount: 20.0,
@@ -330,12 +357,7 @@ mod tests {
         assert_eq!(food.parent, None);
 
         // the transactions' own `category` fields are normalized to match
-        assert!(
-            payload
-                .transactions
-                .iter()
-                .any(|tx| tx.category == "Bills")
-        );
+        assert!(payload.transactions.iter().any(|tx| tx.category == "Bills"));
         assert!(payload.transactions.iter().any(|tx| tx.category == "Food"));
     }
 
@@ -343,7 +365,7 @@ mod tests {
     fn leading_slash_with_no_parent_collapses_to_a_root_category() {
         let transactions = vec![Transaction {
             date: "2025-01-10".to_string(),
-            type_: TransactionType::Spend,
+            transaction_type: TransactionType::Spend,
             category: "  /Child".to_string(),
             bank_account: "AmEx".to_string(),
             amount: 10.0,
@@ -368,7 +390,7 @@ mod tests {
         let transactions = vec![
             Transaction {
                 date: "2025-01-10".to_string(),
-                type_: TransactionType::Spend,
+                transaction_type: TransactionType::Spend,
                 category: "   ".to_string(),
                 bank_account: "AmEx".to_string(),
                 amount: 10.0,
@@ -377,7 +399,7 @@ mod tests {
             },
             Transaction {
                 date: "2025-01-11".to_string(),
-                type_: TransactionType::Spend,
+                transaction_type: TransactionType::Spend,
                 category: " / ".to_string(),
                 bank_account: "AmEx".to_string(),
                 amount: 20.0,
@@ -403,7 +425,7 @@ mod tests {
     fn multipath_category_is_skipped_with_a_warning() {
         let transactions = vec![Transaction {
             date: "2025-01-10".to_string(),
-            type_: TransactionType::Spend,
+            transaction_type: TransactionType::Spend,
             category: "Travel/Europe/Hotels".to_string(),
             bank_account: "AmEx".to_string(),
             amount: 30.0,

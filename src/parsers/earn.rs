@@ -58,7 +58,7 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
 
         let transaction = Transaction {
             date: date.clone(),
-            type_: TransactionType::Earn,
+            transaction_type: TransactionType::Earn,
             category,
             bank_account: DEFAULT_BANK_ACCOUNT_NAME.to_string(),
             amount,

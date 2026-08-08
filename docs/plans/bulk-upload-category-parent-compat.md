@@ -67,11 +67,11 @@ plain root categories serialize exactly as before, with no `"parent": null`
 noise):
 
 ```rust
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Category {
     pub name: String,
     #[serde(rename = "type")]
-    pub type_: TransactionType,
+    pub transaction_type: TransactionType,
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
@@ -80,29 +80,50 @@ pub struct Category {
 
 `#[serde(default, ...)]` is required so existing/old JSON without a `parent`
 key still deserializes (used by `lib.rs` integration tests that round-trip
-JSON through `serde_json::from_str::<Payload>`). `PartialEq`/`Eq`/`Hash` are
-required so `Category` itself can be used as the dedup key in step 2 — see the
-note there for why.
+JSON through `serde_json::from_str::<Payload>`).
 
 ### 2. `src/payload/builder.rs` — split `"Parent/Child"` category strings, and key dedup by `(type, parent, name)`
 
-> **Note (post-review):** this section originally proposed a separate
-> `HashSet<(TransactionType, Option<String>, String)>` tuple as the dedup key,
-> shadowing `Category`'s own fields. After implementation, `Category` was made
-> `PartialEq + Eq + Hash` instead (step 1) so the *same* `Category` value that
-> gets pushed into `payload.categories` is also the `HashSet` element — no
-> parallel key type. This relies on the builder always constructing categories
-> with `description: None`; if that ever changes, dedup would need revisiting
-> since `description` would then be part of the `Hash`/`Eq` identity too. The
-> snippets below reflect what shipped.
+> **Note (post-review):** this section originally proposed a bare
+> `HashSet<(TransactionType, Option<String>, String)>` tuple as the dedup key.
+> A later revision instead made `Category` itself `PartialEq + Eq + Hash` and
+> used `HashSet<Category>` directly, so the same value pushed into
+> `payload.categories` was also the `HashSet` element. Code review pointed out
+> that ties dedup identity to *every* `Category` field (including
+> `description`, and any field added later) and clones the whole struct just
+> to check membership. The shipped design instead uses a small dedicated key
+> type, `CategoryKey { transaction_type, parent, name }` (private to `builder.rs`,
+> `#[derive(PartialEq, Eq, Hash, Clone)]`, with a `From<&Category>` impl) —
+> named fields for readability like the tuple critique wanted, but decoupled
+> from `Category`'s other fields like the struct-identity critique wanted.
+> `Category` itself no longer needs `PartialEq`/`Eq`/`Hash` — the snippet
+> above reflects that. `TransactionType` still needs them (`CategoryKey`
+> contains one).
 
 ```rust
 #[derive(Default)]
 pub struct PayloadBuilder {
     payload: Payload,
-    category_set: std::collections::HashSet<super::types::Category>,
+    category_set: std::collections::HashSet<CategoryKey>,
     bank_account_set: std::collections::HashSet<String>,
     tag_set: std::collections::HashSet<String>,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct CategoryKey {
+    transaction_type: super::types::TransactionType,
+    parent: Option<String>,
+    name: String,
+}
+
+impl From<&super::types::Category> for CategoryKey {
+    fn from(category: &super::types::Category) -> Self {
+        Self {
+            transaction_type: category.transaction_type.clone(),
+            parent: category.parent.clone(),
+            name: category.name.clone(),
+        }
+    }
 }
 ```
 
@@ -129,9 +150,9 @@ fn split_category(category: &str) -> CategorySplit { /* see src/payload/builder.
 
 Inside `add_transactions`, `match split_category(&tx.category)` builds the
 `Category` entries for the `Root`/`Nested` cases (deduping via
-`category_set.insert(category.clone())`), and for those same two cases
-**normalizes `tx.category`** to the trimmed/reconstructed form (`name` for
-`Root`, `"{parent}/{name}"` for `Nested`) so it's guaranteed to match the
+`category_set.insert(CategoryKey::from(&category))`), and for those same two
+cases **normalizes `tx.category`** to the trimmed/reconstructed form (`name`
+for `Root`, `"{parent}/{name}"` for `Nested`) so it's guaranteed to match the
 `categories[]` entries emitted alongside it — the original plan said to leave
 `tx.category` untouched, but code review pointed out that a spreadsheet cell
 with incidental whitespace could otherwise produce a `categories[]` entry that
@@ -156,7 +177,7 @@ cases found in code review — see step 3.1 below):
 fn splits_slash_separated_category_into_parent_and_child_entries() {
     let transactions = vec![Transaction {
         date: "2025-01-10".to_string(),
-        type_: TransactionType::Spend,
+        transaction_type: TransactionType::Spend,
         category: "Vacation/Accomodation".to_string(),
         bank_account: "AmEx".to_string(),
         amount: 100.0,
@@ -182,7 +203,7 @@ fn splits_slash_separated_category_into_parent_and_child_entries() {
         .find(|c| c.name == "Vacation")
         .expect("parent category entry should exist");
     assert_eq!(parent.parent, None);
-    assert_eq!(parent.type_, TransactionType::Spend);
+    assert_eq!(parent.transaction_type, TransactionType::Spend);
 
     let child = payload
         .categories
@@ -190,7 +211,7 @@ fn splits_slash_separated_category_into_parent_and_child_entries() {
         .find(|c| c.name == "Accomodation")
         .expect("child category entry should exist");
     assert_eq!(child.parent, Some("Vacation".to_string()));
-    assert_eq!(child.type_, TransactionType::Spend);
+    assert_eq!(child.transaction_type, TransactionType::Spend);
 
     // the transaction's own `category` field must remain the full path, unchanged
     assert!(
@@ -206,7 +227,7 @@ fn same_bare_category_name_under_different_types_gets_separate_entries() {
     let transactions = vec![
         Transaction {
             date: "2025-01-01".to_string(),
-            type_: TransactionType::Save,
+            transaction_type: TransactionType::Save,
             category: "Other".to_string(),
             bank_account: "Default Account".to_string(),
             amount: 10.0,
@@ -215,7 +236,7 @@ fn same_bare_category_name_under_different_types_gets_separate_entries() {
         },
         Transaction {
             date: "2025-01-02".to_string(),
-            type_: TransactionType::Earn,
+            transaction_type: TransactionType::Earn,
             category: "Other".to_string(),
             bank_account: "Default Account".to_string(),
             amount: 20.0,
@@ -237,13 +258,13 @@ fn same_bare_category_name_under_different_types_gets_separate_entries() {
         payload
             .categories
             .iter()
-            .any(|c| c.name == "Other" && c.type_ == TransactionType::Save)
+            .any(|c| c.name == "Other" && c.transaction_type == TransactionType::Save)
     );
     assert!(
         payload
             .categories
             .iter()
-            .any(|c| c.name == "Other" && c.type_ == TransactionType::Earn)
+            .any(|c| c.name == "Other" && c.transaction_type == TransactionType::Earn)
     );
 }
 ```
