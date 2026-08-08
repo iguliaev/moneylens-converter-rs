@@ -64,11 +64,19 @@ fn split_category(category: &str) -> CategorySplit {
     let parent = parent.trim().to_string();
     let child = child.trim().to_string();
 
+    // Checked before the emptiness match below: a child with a further `/`
+    // is multipath regardless of whether parent is empty (e.g. "/A/B" has
+    // an empty parent but a child of "A/B", which is still not a plain leaf
+    // name). `parent` can never contain `/` itself, since it's everything
+    // before the *first* `/` in the original string.
+    if child.contains('/') {
+        return CategorySplit::Multipath;
+    }
+
     match (parent.is_empty(), child.is_empty()) {
         (true, true) => CategorySplit::Empty,
         (true, false) => CategorySplit::Root(child),
         (false, true) => CategorySplit::Root(parent),
-        (false, false) if child.contains('/') => CategorySplit::Multipath,
         (false, false) => CategorySplit::Nested {
             parent,
             name: child,
@@ -259,7 +267,10 @@ mod tests {
         assert_eq!(child.parent, Some("Vacation".to_string()));
         assert_eq!(child.transaction_type, TransactionType::Spend);
 
-        // the transaction's own `category` field must remain the full path, unchanged
+        // the transaction's own `category` stays a valid "Parent/Child" path
+        // matching the categories[] entries above (already trimmed here, so
+        // normalization is a no-op — see trailing_slash_with_no_child_collapses_to_a_root_category
+        // for a case where normalization actually changes the value)
         assert!(
             payload
                 .transactions
@@ -445,5 +456,33 @@ mod tests {
         // reject it at upload time since the referenced category doesn't exist
         assert_eq!(payload.transactions.len(), 1);
         assert_eq!(payload.transactions[0].category, "Travel/Europe/Hotels");
+    }
+
+    #[test]
+    fn multipath_category_with_empty_parent_is_also_skipped() {
+        // An empty parent segment must not mask a multipath child: "/A/B"
+        // has parent = "" and child = "A/B", and the child still contains a
+        // "/", so this must be treated the same as any other multipath
+        // category, not collapsed to a root category named "A/B".
+        let transactions = vec![Transaction {
+            date: "2025-01-10".to_string(),
+            transaction_type: TransactionType::Spend,
+            category: "/A/B".to_string(),
+            bank_account: "AmEx".to_string(),
+            amount: 30.0,
+            tags: vec![],
+            notes: None,
+        }];
+
+        let payload = PayloadBuilder::default()
+            .add_transactions(transactions)
+            .build();
+
+        assert!(
+            payload.categories.is_empty(),
+            "a multipath category with an empty parent segment must not produce any category entries"
+        );
+        assert_eq!(payload.transactions.len(), 1);
+        assert_eq!(payload.transactions[0].category, "/A/B");
     }
 }

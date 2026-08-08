@@ -279,13 +279,17 @@ the existing round-trip through `serde_json::from_str::<Payload>` will already
 fail to compile/deserialize if the new field is wired up wrong, since
 `Payload` derives `Deserialize`.
 
-### 5. Parsers (`src/parsers/*.rs`) — no change needed
+### 5. Parsers (`src/parsers/*.rs`) — no category-splitting changes needed
 
 Parsers just extract raw cell text into `Transaction.category` verbatim
 (whatever string is literally in the spreadsheet cell, e.g. `"Vacation"` or
 `"Vacation/Accomodation"`). All splitting logic lives in the builder (step 2),
 so `tests/spend_parser_tests.rs`, `earn_parser_tests.rs`, `save_parser_tests.rs`
-need no changes.
+need no *category-splitting* changes. They **did** end up touched by a later,
+unrelated mechanical rename (`type_` → `transaction_type` on `Category` and
+`Transaction`, requested separately from the schema-compat work), but that's
+a pure identifier rename with no behavior change — see the `TransactionType`
+field on those structs in `src/payload/types.rs`.
 
 ### 6. Verification
 
@@ -333,6 +337,13 @@ field on the child.
   `"Bills/"` → `"Bills"`, `"  /Bills"` → `"Bills"`); if *both* segments are
   empty (e.g. `"/"`, `"   "`), that's `CategorySplit::Empty` — same
   warn-and-skip treatment as `Multipath`.
+- A follow-up review round caught a bug in the *first* fix above: an empty
+  parent didn't stop the multipath check, so `"/A/B"` (empty parent, child
+  `"A/B"`) fell into the `Root(child)` branch and emitted a `Category` named
+  `"A/B"` — a leaf name containing `/`, exactly what the `Multipath` case
+  exists to prevent. Fixed by checking `child.contains('/')` before the
+  empty-segment matching, not after (`parent` can never itself contain `/`,
+  since it's everything before the *first* `/`).
 - Server-side "explicit entry wins over auto-derived parent" behavior (for
   `description`) doesn't apply here — the converter never sets category
   descriptions.
@@ -340,12 +351,14 @@ field on the child.
 ## Acceptance criteria
 
 - [x] `Category` has a `parent: Option<String>` field, omitted from JSON when `None`.
-- [x] `TransactionType` derives `Hash`; `Category` derives `PartialEq`/`Eq`/`Hash` too
-      (shipped design — see the note in step 2).
+- [x] `TransactionType` derives `Hash`. `Category` itself does **not** derive
+      `PartialEq`/`Eq`/`Hash` in the shipped design — those live on the
+      private `CategoryKey` type instead (see the note in step 2).
 - [x] `PayloadBuilder` splits any `"Parent/Child"` transaction category into a
       root parent `Category` entry + a child `Category` entry with `parent` set.
 - [x] Category dedup identity is `(type, parent, name)` — implemented via
-      `HashSet<Category>` rather than a separate tuple key (see step 2 note).
+      `HashSet<CategoryKey>`, a dedicated key type, not `HashSet<Category>`
+      and not a bare tuple (see step 2 note).
 - [x] Transaction `category` fields are normalized (trimmed/reconstructed) to
       match their corresponding `categories[]` entries for the `Root`/`Nested`
       cases; left untouched for `Multipath`/`Empty` (deviates from the
