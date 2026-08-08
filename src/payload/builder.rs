@@ -12,48 +12,59 @@ pub struct PayloadBuilder {
 /// API's own `"Parent/Child"` rule for `TransactionInput.category` (split on
 /// the first `/`, each side trimmed).
 enum CategorySplit {
-    /// No `/`, or a trailing `/` with nothing but whitespace after it
-    /// (e.g. `"Bills"` or `"Bills/  "`) — a plain root-level category.
+    /// No `/`, or a `/` split where one side trims down to nothing (e.g.
+    /// `"Bills"`, `"Bills/  "`, or `"  /Bills"`) — a plain root-level
+    /// category using whichever side is non-empty.
     Root(String),
-    /// A `"Parent/Child"` path with exactly one `/`.
+    /// A `"Parent/Child"` path with exactly one `/` and non-empty content
+    /// on both sides.
     Nested { parent: String, name: String },
     /// More than one `/` (e.g. `"A/B/C"`) — the schema caps hierarchy at 2
-    /// levels, so this can't be represented and is rejected by the caller.
+    /// levels, so this can't be represented. The caller logs a warning and
+    /// skips adding any `categories[]` entries for it, leaving the
+    /// transaction's own `category` field untouched.
     Multipath,
+    /// Both sides trim down to nothing (e.g. `"/"`, `"   "`, `" / "`) — no
+    /// usable category name at all. The caller logs a warning and skips it,
+    /// leaving the transaction's own `category` field untouched.
+    Empty,
 }
 
 fn split_category(category: &str) -> CategorySplit {
     let Some((parent, child)) = category.split_once('/') else {
-        return CategorySplit::Root(category.trim().to_string());
+        let name = category.trim().to_string();
+        return if name.is_empty() {
+            CategorySplit::Empty
+        } else {
+            CategorySplit::Root(name)
+        };
     };
 
     let parent = parent.trim().to_string();
-    let child = child.trim();
+    let child = child.trim().to_string();
 
-    if child.is_empty() {
-        return CategorySplit::Root(parent);
-    }
-
-    if child.contains('/') {
-        return CategorySplit::Multipath;
-    }
-
-    CategorySplit::Nested {
-        parent,
-        name: child.to_string(),
+    match (parent.is_empty(), child.is_empty()) {
+        (true, true) => CategorySplit::Empty,
+        (true, false) => CategorySplit::Root(child),
+        (false, true) => CategorySplit::Root(parent),
+        (false, false) if child.contains('/') => CategorySplit::Multipath,
+        (false, false) => CategorySplit::Nested { parent, name: child },
     }
 }
 
 impl PayloadBuilder {
     pub fn add_transactions(mut self, transactions: Vec<super::types::Transaction>) -> Self {
-        transactions.iter().for_each(|tx| {
+        for mut tx in transactions {
             // Add unique categories, splitting "Parent/Child" into a root
             // parent entry + a child entry with `parent` set, matching the
-            // API's CategoryInput.parent field.
+            // API's CategoryInput.parent field. The transaction's own
+            // `category` is normalized to the same trimmed form so it's
+            // guaranteed to match the categories[] entries emitted here,
+            // even if the source cell had incidental whitespace.
             match split_category(&tx.category) {
                 CategorySplit::Root(name) => {
                     let category = super::types::Category {
-                        name,
+                        name: name.clone(),
                         type_: tx.type_.clone(),
                         description: None,
                         parent: None,
@@ -61,6 +72,7 @@ impl PayloadBuilder {
                     if self.category_set.insert(category.clone()) {
                         self.payload.categories.push(category);
                     }
+                    tx.category = name;
                 }
                 CategorySplit::Nested { parent, name } => {
                     let parent_category = super::types::Category {
@@ -74,20 +86,29 @@ impl PayloadBuilder {
                     }
 
                     let child_category = super::types::Category {
-                        name,
+                        name: name.clone(),
                         type_: tx.type_.clone(),
                         description: None,
-                        parent: Some(parent),
+                        parent: Some(parent.clone()),
                     };
                     if self.category_set.insert(child_category.clone()) {
                         self.payload.categories.push(child_category);
                     }
+
+                    tx.category = format!("{parent}/{name}");
                 }
                 CategorySplit::Multipath => {
                     eprintln!(
                         "Warning: category \"{}\" has more than one level of nesting; \
                          multi-level category paths are not supported, skipping category \
                          entry for this transaction",
+                        tx.category
+                    );
+                }
+                CategorySplit::Empty => {
+                    eprintln!(
+                        "Warning: category \"{}\" has no usable name after trimming; \
+                         skipping category entry for this transaction",
                         tx.category
                     );
                 }
@@ -112,9 +133,10 @@ impl PayloadBuilder {
                     self.tag_set.insert(tag.clone());
                 }
             }
-        });
 
-        self.payload.transactions.extend(transactions);
+            self.payload.transactions.push(tx);
+        }
+
         self
     }
 
@@ -306,6 +328,75 @@ mod tests {
             .find(|c| c.name == "Food")
             .expect("\"Food/   \" should collapse to a root category named \"Food\"");
         assert_eq!(food.parent, None);
+
+        // the transactions' own `category` fields are normalized to match
+        assert!(
+            payload
+                .transactions
+                .iter()
+                .any(|tx| tx.category == "Bills")
+        );
+        assert!(payload.transactions.iter().any(|tx| tx.category == "Food"));
+    }
+
+    #[test]
+    fn leading_slash_with_no_parent_collapses_to_a_root_category() {
+        let transactions = vec![Transaction {
+            date: "2025-01-10".to_string(),
+            type_: TransactionType::Spend,
+            category: "  /Child".to_string(),
+            bank_account: "AmEx".to_string(),
+            amount: 10.0,
+            tags: vec![],
+            notes: None,
+        }];
+
+        let payload = PayloadBuilder::default()
+            .add_transactions(transactions)
+            .build();
+
+        assert_eq!(payload.categories.len(), 1);
+        let child = &payload.categories[0];
+        assert_eq!(child.name, "Child");
+        assert_eq!(child.parent, None);
+
+        assert_eq!(payload.transactions[0].category, "Child");
+    }
+
+    #[test]
+    fn blank_category_produces_no_entries_and_leaves_transaction_untouched() {
+        let transactions = vec![
+            Transaction {
+                date: "2025-01-10".to_string(),
+                type_: TransactionType::Spend,
+                category: "   ".to_string(),
+                bank_account: "AmEx".to_string(),
+                amount: 10.0,
+                tags: vec![],
+                notes: None,
+            },
+            Transaction {
+                date: "2025-01-11".to_string(),
+                type_: TransactionType::Spend,
+                category: " / ".to_string(),
+                bank_account: "AmEx".to_string(),
+                amount: 20.0,
+                tags: vec![],
+                notes: None,
+            },
+        ];
+
+        let payload = PayloadBuilder::default()
+            .add_transactions(transactions)
+            .build();
+
+        assert!(
+            payload.categories.is_empty(),
+            "a category with no usable name on either side must not produce any category entries"
+        );
+        assert_eq!(payload.transactions.len(), 2);
+        assert_eq!(payload.transactions[0].category, "   ");
+        assert_eq!(payload.transactions[1].category, " / ");
     }
 
     #[test]

@@ -67,7 +67,7 @@ plain root categories serialize exactly as before, with no `"parent": null`
 noise):
 
 ```rust
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Category {
     pub name: String,
     #[serde(rename = "type")]
@@ -80,18 +80,27 @@ pub struct Category {
 
 `#[serde(default, ...)]` is required so existing/old JSON without a `parent`
 key still deserializes (used by `lib.rs` integration tests that round-trip
-JSON through `serde_json::from_str::<Payload>`).
+JSON through `serde_json::from_str::<Payload>`). `PartialEq`/`Eq`/`Hash` are
+required so `Category` itself can be used as the dedup key in step 2 — see the
+note there for why.
 
 ### 2. `src/payload/builder.rs` — split `"Parent/Child"` category strings, and key dedup by `(type, parent, name)`
 
-Change the `category_set` field type from `HashSet<String>` to a tuple key
-that captures type, parent, and name:
+> **Note (post-review):** this section originally proposed a separate
+> `HashSet<(TransactionType, Option<String>, String)>` tuple as the dedup key,
+> shadowing `Category`'s own fields. After implementation, `Category` was made
+> `PartialEq + Eq + Hash` instead (step 1) so the *same* `Category` value that
+> gets pushed into `payload.categories` is also the `HashSet` element — no
+> parallel key type. This relies on the builder always constructing categories
+> with `description: None`; if that ever changes, dedup would need revisiting
+> since `description` would then be part of the `Hash`/`Eq` identity too. The
+> snippets below reflect what shipped.
 
 ```rust
 #[derive(Default)]
 pub struct PayloadBuilder {
     payload: Payload,
-    category_set: std::collections::HashSet<(super::types::TransactionType, Option<String>, String)>,
+    category_set: std::collections::HashSet<super::types::Category>,
     bank_account_set: std::collections::HashSet<String>,
     tag_set: std::collections::HashSet<String>,
 }
@@ -102,61 +111,45 @@ no `type` dimension and no hierarchy in the schema, so leave them as-is.)
 
 Add a private helper that mirrors the API's own splitting rule ("split on the
 *first* `/`, each side trimmed" — see `bulk-upload.md`'s `TransactionInput.category`
-docs):
+docs). It also has to defensively handle segments that are empty after
+trimming (e.g. a stray leading/trailing `/`, or a cell that's pure whitespace)
+and paths with more than one `/`, both found during code review — see the enum
+variants' doc comments in `src/payload/builder.rs` for the exact rules:
 
 ```rust
-fn split_category(category: &str) -> (Option<String>, String) {
-    match category.split_once('/') {
-        Some((parent, child)) => (Some(parent.trim().to_string()), child.trim().to_string()),
-        None => (None, category.trim().to_string()),
-    }
+enum CategorySplit {
+    Root(String),
+    Nested { parent: String, name: String },
+    Multipath,
+    Empty,
 }
+
+fn split_category(category: &str) -> CategorySplit { /* see src/payload/builder.rs */ }
 ```
 
-Replace the "Add unique categories" block inside `add_transactions` with:
-
-```rust
-// Add unique categories, splitting "Parent/Child" into a root parent
-// entry + a child entry with `parent` set, matching the API's
-// CategoryInput.parent field (see docs/plans/bulk-upload-category-parent-compat.md).
-let (parent, name) = split_category(&tx.category);
-
-if let Some(ref parent_name) = parent {
-    let parent_key = (tx.type_.clone(), None, parent_name.clone());
-    if self.category_set.insert(parent_key) {
-        self.payload.categories.push(super::types::Category {
-            name: parent_name.clone(),
-            type_: tx.type_.clone(),
-            description: None,
-            parent: None,
-        });
-    }
-}
-
-let child_key = (tx.type_.clone(), parent.clone(), name.clone());
-if self.category_set.insert(child_key) {
-    self.payload.categories.push(super::types::Category {
-        name,
-        type_: tx.type_.clone(),
-        description: None,
-        parent,
-    });
-}
-```
-
-Leave the bank account and tag blocks, and the final
-`self.payload.transactions.extend(transactions); self` — unchanged. In
-particular, **do not** rewrite `tx.category` itself — the transaction's own
-`category` field must keep the full `"Vacation/Accomodation"` path string
-unchanged, since that's the correct form for `TransactionInput.category`.
+Inside `add_transactions`, `match split_category(&tx.category)` builds the
+`Category` entries for the `Root`/`Nested` cases (deduping via
+`category_set.insert(category.clone())`), and for those same two cases
+**normalizes `tx.category`** to the trimmed/reconstructed form (`name` for
+`Root`, `"{parent}/{name}"` for `Nested`) so it's guaranteed to match the
+`categories[]` entries emitted alongside it — the original plan said to leave
+`tx.category` untouched, but code review pointed out that a spreadsheet cell
+with incidental whitespace could otherwise produce a `categories[]` entry that
+doesn't textually match the transaction's own `category` string. `Multipath`
+and `Empty` log a warning (via `eprintln!`) and leave `tx.category` untouched,
+since no matching `categories[]` entry is created for either — the API will
+reject that transaction at upload time regardless, and preserving the raw
+string aids debugging why.
 
 ### 3. Add/update tests in `src/payload/builder.rs`
 
 Keep the existing `test_payload_builder` test as-is (it only uses flat
 category names, unaffected by this change — just note it will now also
-implicitly exercise the new `category_set` tuple key).
+implicitly exercise `category_set`'s new `Category`-keyed dedup).
 
-Add two new tests in the same `#[cfg(test)] mod tests` block:
+Add two new tests in the same `#[cfg(test)] mod tests` block (the shipped code
+adds two further tests beyond these, covering the `Empty`/leading-slash edge
+cases found in code review — see step 3.1 below):
 
 ```rust
 #[test]
@@ -303,25 +296,39 @@ field on the child.
 ## Out of scope / known limitations
 
 - `BankAccountInput`/`TagInput` shapes are already compatible — no changes.
-- Transaction fields already match the schema as-is — no changes.
-- No 3-level category nesting exists in real data today, so `split_category`
-  only ever needs to split on the *first* `/` (matching the API's own rule).
-  If a category string ever had two slashes (e.g. `"A/B/C"`), the "child" half
-  would itself be `"B/C"` — not a plain leaf name — which the API schema
-  doesn't support for `CategoryInput.parent` (max 2 levels). This isn't
-  handled defensively here since it doesn't occur in current data; if it
-  becomes a real scenario, add explicit rejection/logging for categories with
-  more than one `/`.
+- No 3-level category nesting exists in real data today, but code review
+  (PR #8) flagged that `split_category` shouldn't silently mishandle it if it
+  *does* occur. **Now handled**: a category string with more than one `/`
+  (e.g. `"A/B/C"`) is detected as `CategorySplit::Multipath` — the schema caps
+  hierarchy at 2 levels and can't represent it, so the converter logs a
+  warning via `eprintln!` and skips adding any `categories[]` entries for that
+  transaction, leaving `tx.category` untouched. The API will still reject that
+  transaction at upload time (referenced category won't exist), but the
+  converter itself no longer emits an invalid leaf name containing `/`.
+- Similarly, code review found that a stray leading/trailing `/` (or a
+  whitespace-only cell) could produce a `Category` with an **empty** `name`.
+  **Now handled**: `split_category` collapses a segment that trims to nothing
+  down to a plain root category using the other, non-empty segment (e.g.
+  `"Bills/"` → `"Bills"`, `"  /Bills"` → `"Bills"`); if *both* segments are
+  empty (e.g. `"/"`, `"   "`), that's `CategorySplit::Empty` — same
+  warn-and-skip treatment as `Multipath`.
 - Server-side "explicit entry wins over auto-derived parent" behavior (for
   `description`) doesn't apply here — the converter never sets category
   descriptions.
 
 ## Acceptance criteria
 
-- [ ] `Category` has a `parent: Option<String>` field, omitted from JSON when `None`.
-- [ ] `TransactionType` derives `Hash`.
-- [ ] `PayloadBuilder` splits any `"Parent/Child"` transaction category into a
+- [x] `Category` has a `parent: Option<String>` field, omitted from JSON when `None`.
+- [x] `TransactionType` derives `Hash`; `Category` derives `PartialEq`/`Eq`/`Hash` too
+      (shipped design — see the note in step 2).
+- [x] `PayloadBuilder` splits any `"Parent/Child"` transaction category into a
       root parent `Category` entry + a child `Category` entry with `parent` set.
-- [ ] Category dedup is keyed by `(type, parent, name)`, not name alone.
-- [ ] Transaction `category` fields are left unchanged (still the full path string).
-- [ ] New tests for both behaviors above pass; full test suite passes.
+- [x] Category dedup identity is `(type, parent, name)` — implemented via
+      `HashSet<Category>` rather than a separate tuple key (see step 2 note).
+- [x] Transaction `category` fields are normalized (trimmed/reconstructed) to
+      match their corresponding `categories[]` entries for the `Root`/`Nested`
+      cases; left untouched for `Multipath`/`Empty` (deviates from the
+      original "always leave unchanged" plan — see step 2 note).
+- [x] Category strings with empty segments (stray `/`) or more than one `/`
+      are detected and handled without emitting invalid `categories[]` entries.
+- [x] New tests for all behaviors above pass; full test suite passes.
