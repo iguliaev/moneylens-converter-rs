@@ -66,7 +66,7 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
 
         let transaction = Transaction {
             date,
-            type_: TransactionType::Spend,
+            transaction_type: TransactionType::Spend,
             category,
             bank_account,
             amount,

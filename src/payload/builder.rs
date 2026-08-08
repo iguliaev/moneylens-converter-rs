@@ -3,22 +3,150 @@ use super::types::Payload;
 #[derive(Default)]
 pub struct PayloadBuilder {
     payload: Payload,
-    category_set: std::collections::HashSet<String>,
+    category_set: std::collections::HashSet<CategoryKey>,
     bank_account_set: std::collections::HashSet<String>,
     tag_set: std::collections::HashSet<String>,
 }
 
+/// Dedup identity for a `Category`, matching the DB's own
+/// `(user_id, type, name, parent_id)` uniqueness constraint. Deliberately
+/// excludes `description` (and any other future `Category` field) so dedup
+/// stays tied to identity, not the full struct.
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct CategoryKey {
+    transaction_type: super::types::TransactionType,
+    parent: Option<String>,
+    name: String,
+}
+
+impl From<&super::types::Category> for CategoryKey {
+    fn from(category: &super::types::Category) -> Self {
+        Self {
+            transaction_type: category.transaction_type.clone(),
+            parent: category.parent.clone(),
+            name: category.name.clone(),
+        }
+    }
+}
+
+/// The result of splitting a transaction's category string, mirroring the
+/// API's own `"Parent/Child"` rule for `TransactionInput.category` (split on
+/// the first `/`, each side trimmed).
+enum CategorySplit {
+    /// No `/`, or a `/` split where one side trims down to nothing (e.g.
+    /// `"Bills"`, `"Bills/  "`, or `"  /Bills"`) — a plain root-level
+    /// category using whichever side is non-empty.
+    Root(String),
+    /// A `"Parent/Child"` path with exactly one `/` and non-empty content
+    /// on both sides.
+    Nested { parent: String, name: String },
+    /// More than one `/` (e.g. `"A/B/C"`) — the schema caps hierarchy at 2
+    /// levels, so this can't be represented. The caller logs a warning and
+    /// skips adding any `categories[]` entries for it, leaving the
+    /// transaction's own `category` field untouched.
+    Multipath,
+    /// Both sides trim down to nothing (e.g. `"/"`, `"   "`, `" / "`) — no
+    /// usable category name at all. The caller logs a warning and skips it,
+    /// leaving the transaction's own `category` field untouched.
+    Empty,
+}
+
+fn split_category(category: &str) -> CategorySplit {
+    let Some((parent, child)) = category.split_once('/') else {
+        let name = category.trim().to_string();
+        return if name.is_empty() {
+            CategorySplit::Empty
+        } else {
+            CategorySplit::Root(name)
+        };
+    };
+
+    let parent = parent.trim().to_string();
+    let child = child.trim().to_string();
+
+    // Checked before the emptiness match below: a child with a further `/`
+    // is multipath regardless of whether parent is empty (e.g. "/A/B" has
+    // an empty parent but a child of "A/B", which is still not a plain leaf
+    // name). `parent` can never contain `/` itself, since it's everything
+    // before the *first* `/` in the original string.
+    if child.contains('/') {
+        return CategorySplit::Multipath;
+    }
+
+    match (parent.is_empty(), child.is_empty()) {
+        (true, true) => CategorySplit::Empty,
+        (true, false) => CategorySplit::Root(child),
+        (false, true) => CategorySplit::Root(parent),
+        (false, false) => CategorySplit::Nested {
+            parent,
+            name: child,
+        },
+    }
+}
+
 impl PayloadBuilder {
     pub fn add_transactions(mut self, transactions: Vec<super::types::Transaction>) -> Self {
-        transactions.iter().for_each(|tx| {
-            // Add unique categories
-            if !self.category_set.contains(&tx.category) {
-                self.payload.categories.push(super::types::Category {
-                    name: tx.category.clone(),
-                    type_: tx.type_.clone(),
-                    description: None,
-                });
-                self.category_set.insert(tx.category.clone());
+        for mut tx in transactions {
+            // Add unique categories, splitting "Parent/Child" into a root
+            // parent entry + a child entry with `parent` set, matching the
+            // API's CategoryInput.parent field. The transaction's own
+            // `category` is normalized to the same trimmed form so it's
+            // guaranteed to match the categories[] entries emitted here,
+            // even if the source cell had incidental whitespace.
+            match split_category(&tx.category) {
+                CategorySplit::Root(name) => {
+                    let category = super::types::Category {
+                        name: name.clone(),
+                        transaction_type: tx.transaction_type.clone(),
+                        description: None,
+                        parent: None,
+                    };
+                    if self.category_set.insert(CategoryKey::from(&category)) {
+                        self.payload.categories.push(category);
+                    }
+                    tx.category = name;
+                }
+                CategorySplit::Nested { parent, name } => {
+                    let parent_category = super::types::Category {
+                        name: parent.clone(),
+                        transaction_type: tx.transaction_type.clone(),
+                        description: None,
+                        parent: None,
+                    };
+                    if self
+                        .category_set
+                        .insert(CategoryKey::from(&parent_category))
+                    {
+                        self.payload.categories.push(parent_category);
+                    }
+
+                    let child_category = super::types::Category {
+                        name: name.clone(),
+                        transaction_type: tx.transaction_type.clone(),
+                        description: None,
+                        parent: Some(parent.clone()),
+                    };
+                    if self.category_set.insert(CategoryKey::from(&child_category)) {
+                        self.payload.categories.push(child_category);
+                    }
+
+                    tx.category = format!("{parent}/{name}");
+                }
+                CategorySplit::Multipath => {
+                    eprintln!(
+                        "Warning: category \"{}\" has more than one level of nesting; \
+                         multi-level category paths are not supported, skipping category \
+                         entry for this transaction",
+                        tx.category
+                    );
+                }
+                CategorySplit::Empty => {
+                    eprintln!(
+                        "Warning: category \"{}\" has no usable name after trimming; \
+                         skipping category entry for this transaction",
+                        tx.category
+                    );
+                }
             }
 
             // Add unique bank accounts
@@ -40,9 +168,10 @@ impl PayloadBuilder {
                     self.tag_set.insert(tag.clone());
                 }
             }
-        });
 
-        self.payload.transactions.extend(transactions);
+            self.payload.transactions.push(tx);
+        }
+
         self
     }
 
@@ -61,7 +190,7 @@ mod tests {
         let transactions = vec![
             Transaction {
                 date: "2024-01-01".to_string(),
-                type_: TransactionType::Spend,
+                transaction_type: TransactionType::Spend,
                 category: "Food".to_string(),
                 bank_account: "Checking".to_string(),
                 amount: 50.0,
@@ -70,7 +199,7 @@ mod tests {
             },
             Transaction {
                 date: "2024-01-02".to_string(),
-                type_: TransactionType::Earn,
+                transaction_type: TransactionType::Earn,
                 category: "Salary".to_string(),
                 bank_account: "Checking".to_string(),
                 amount: 2000.0,
@@ -96,5 +225,264 @@ mod tests {
             "Expected 1 unique bank account"
         );
         assert_eq!(payload.tags.len(), 1, "Expected 1 unique tag");
+    }
+
+    #[test]
+    fn splits_slash_separated_category_into_parent_and_child_entries() {
+        let transactions = vec![Transaction {
+            date: "2025-01-10".to_string(),
+            transaction_type: TransactionType::Spend,
+            category: "Vacation/Accomodation".to_string(),
+            bank_account: "AmEx".to_string(),
+            amount: 100.0,
+            tags: vec![],
+            notes: None,
+        }];
+
+        let payload = PayloadBuilder::default()
+            .add_transactions(transactions.clone())
+            .add_transactions(transactions) // re-adding must not duplicate entries
+            .build();
+
+        assert_eq!(payload.transactions.len(), 2);
+        assert_eq!(
+            payload.categories.len(),
+            2,
+            "expected exactly one parent entry and one child entry, deduped across both adds"
+        );
+
+        let parent = payload
+            .categories
+            .iter()
+            .find(|c| c.name == "Vacation")
+            .expect("parent category entry should exist");
+        assert_eq!(parent.parent, None);
+        assert_eq!(parent.transaction_type, TransactionType::Spend);
+
+        let child = payload
+            .categories
+            .iter()
+            .find(|c| c.name == "Accomodation")
+            .expect("child category entry should exist");
+        assert_eq!(child.parent, Some("Vacation".to_string()));
+        assert_eq!(child.transaction_type, TransactionType::Spend);
+
+        // the transaction's own `category` stays a valid "Parent/Child" path
+        // matching the categories[] entries above (already trimmed here, so
+        // normalization is a no-op — see trailing_slash_with_no_child_collapses_to_a_root_category
+        // for a case where normalization actually changes the value)
+        assert!(
+            payload
+                .transactions
+                .iter()
+                .all(|tx| tx.category == "Vacation/Accomodation")
+        );
+    }
+
+    #[test]
+    fn same_bare_category_name_under_different_types_gets_separate_entries() {
+        let transactions = vec![
+            Transaction {
+                date: "2025-01-01".to_string(),
+                transaction_type: TransactionType::Save,
+                category: "Other".to_string(),
+                bank_account: "Default Account".to_string(),
+                amount: 10.0,
+                tags: vec![],
+                notes: None,
+            },
+            Transaction {
+                date: "2025-01-02".to_string(),
+                transaction_type: TransactionType::Earn,
+                category: "Other".to_string(),
+                bank_account: "Default Account".to_string(),
+                amount: 20.0,
+                tags: vec![],
+                notes: None,
+            },
+        ];
+
+        let payload = PayloadBuilder::default()
+            .add_transactions(transactions)
+            .build();
+
+        assert_eq!(
+            payload.categories.len(),
+            2,
+            "same bare name under two different transaction types must produce two category entries"
+        );
+        assert!(
+            payload
+                .categories
+                .iter()
+                .any(|c| c.name == "Other" && c.transaction_type == TransactionType::Save)
+        );
+        assert!(
+            payload
+                .categories
+                .iter()
+                .any(|c| c.name == "Other" && c.transaction_type == TransactionType::Earn)
+        );
+    }
+
+    #[test]
+    fn trailing_slash_with_no_child_collapses_to_a_root_category() {
+        let transactions = vec![
+            Transaction {
+                date: "2025-01-10".to_string(),
+                transaction_type: TransactionType::Spend,
+                category: "Bills/".to_string(),
+                bank_account: "AmEx".to_string(),
+                amount: 10.0,
+                tags: vec![],
+                notes: None,
+            },
+            Transaction {
+                date: "2025-01-11".to_string(),
+                transaction_type: TransactionType::Spend,
+                category: "Food/   ".to_string(),
+                bank_account: "AmEx".to_string(),
+                amount: 20.0,
+                tags: vec![],
+                notes: None,
+            },
+        ];
+
+        let payload = PayloadBuilder::default()
+            .add_transactions(transactions)
+            .build();
+
+        assert_eq!(payload.categories.len(), 2);
+        let bills = payload
+            .categories
+            .iter()
+            .find(|c| c.name == "Bills")
+            .expect("\"Bills/\" should collapse to a root category named \"Bills\"");
+        assert_eq!(bills.parent, None);
+
+        let food = payload
+            .categories
+            .iter()
+            .find(|c| c.name == "Food")
+            .expect("\"Food/   \" should collapse to a root category named \"Food\"");
+        assert_eq!(food.parent, None);
+
+        // the transactions' own `category` fields are normalized to match
+        assert!(payload.transactions.iter().any(|tx| tx.category == "Bills"));
+        assert!(payload.transactions.iter().any(|tx| tx.category == "Food"));
+    }
+
+    #[test]
+    fn leading_slash_with_no_parent_collapses_to_a_root_category() {
+        let transactions = vec![Transaction {
+            date: "2025-01-10".to_string(),
+            transaction_type: TransactionType::Spend,
+            category: "  /Child".to_string(),
+            bank_account: "AmEx".to_string(),
+            amount: 10.0,
+            tags: vec![],
+            notes: None,
+        }];
+
+        let payload = PayloadBuilder::default()
+            .add_transactions(transactions)
+            .build();
+
+        assert_eq!(payload.categories.len(), 1);
+        let child = &payload.categories[0];
+        assert_eq!(child.name, "Child");
+        assert_eq!(child.parent, None);
+
+        assert_eq!(payload.transactions[0].category, "Child");
+    }
+
+    #[test]
+    fn blank_category_produces_no_entries_and_leaves_transaction_untouched() {
+        let transactions = vec![
+            Transaction {
+                date: "2025-01-10".to_string(),
+                transaction_type: TransactionType::Spend,
+                category: "   ".to_string(),
+                bank_account: "AmEx".to_string(),
+                amount: 10.0,
+                tags: vec![],
+                notes: None,
+            },
+            Transaction {
+                date: "2025-01-11".to_string(),
+                transaction_type: TransactionType::Spend,
+                category: " / ".to_string(),
+                bank_account: "AmEx".to_string(),
+                amount: 20.0,
+                tags: vec![],
+                notes: None,
+            },
+        ];
+
+        let payload = PayloadBuilder::default()
+            .add_transactions(transactions)
+            .build();
+
+        assert!(
+            payload.categories.is_empty(),
+            "a category with no usable name on either side must not produce any category entries"
+        );
+        assert_eq!(payload.transactions.len(), 2);
+        assert_eq!(payload.transactions[0].category, "   ");
+        assert_eq!(payload.transactions[1].category, " / ");
+    }
+
+    #[test]
+    fn multipath_category_is_skipped_with_a_warning() {
+        let transactions = vec![Transaction {
+            date: "2025-01-10".to_string(),
+            transaction_type: TransactionType::Spend,
+            category: "Travel/Europe/Hotels".to_string(),
+            bank_account: "AmEx".to_string(),
+            amount: 30.0,
+            tags: vec![],
+            notes: None,
+        }];
+
+        let payload = PayloadBuilder::default()
+            .add_transactions(transactions)
+            .build();
+
+        assert!(
+            payload.categories.is_empty(),
+            "a category path with more than one level of nesting must not produce any category entries"
+        );
+        // the transaction itself is still emitted unchanged; the API will
+        // reject it at upload time since the referenced category doesn't exist
+        assert_eq!(payload.transactions.len(), 1);
+        assert_eq!(payload.transactions[0].category, "Travel/Europe/Hotels");
+    }
+
+    #[test]
+    fn multipath_category_with_empty_parent_is_also_skipped() {
+        // An empty parent segment must not mask a multipath child: "/A/B"
+        // has parent = "" and child = "A/B", and the child still contains a
+        // "/", so this must be treated the same as any other multipath
+        // category, not collapsed to a root category named "A/B".
+        let transactions = vec![Transaction {
+            date: "2025-01-10".to_string(),
+            transaction_type: TransactionType::Spend,
+            category: "/A/B".to_string(),
+            bank_account: "AmEx".to_string(),
+            amount: 30.0,
+            tags: vec![],
+            notes: None,
+        }];
+
+        let payload = PayloadBuilder::default()
+            .add_transactions(transactions)
+            .build();
+
+        assert!(
+            payload.categories.is_empty(),
+            "a multipath category with an empty parent segment must not produce any category entries"
+        );
+        assert_eq!(payload.transactions.len(), 1);
+        assert_eq!(payload.transactions[0].category, "/A/B");
     }
 }

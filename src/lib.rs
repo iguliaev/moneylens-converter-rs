@@ -79,7 +79,7 @@ mod tests {
     fn filters_transactions_before_building_payload_metadata() {
         let january_food = Transaction {
             date: "2025-01-15".to_string(),
-            type_: TransactionType::Spend,
+            transaction_type: TransactionType::Spend,
             category: "Food".to_string(),
             bank_account: "NatWest".to_string(),
             amount: 10.0,
@@ -88,7 +88,7 @@ mod tests {
         };
         let february_salary = Transaction {
             date: "2025-02-01".to_string(),
-            type_: TransactionType::Earn,
+            transaction_type: TransactionType::Earn,
             category: "Salary".to_string(),
             bank_account: "Checking".to_string(),
             amount: 1000.0,
@@ -140,6 +140,7 @@ mod tests {
         );
         assert_eq!(payload.categories.len(), 1);
         assert_eq!(payload.categories[0].name, "Other");
+        assert_eq!(payload.categories[0].parent, None);
         assert!(payload.tags.is_empty());
         assert!(
             payload
