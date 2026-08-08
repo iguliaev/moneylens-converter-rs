@@ -1,5 +1,4 @@
 use moneylens_converter_rs::parsers;
-use spreadsheet_ods;
 
 #[test]
 fn test_extract_annotation_text() {
