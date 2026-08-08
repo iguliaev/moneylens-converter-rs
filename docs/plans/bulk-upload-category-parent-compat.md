@@ -1,9 +1,8 @@
 # Plan: Align converter output with `bulk_upload_data` category schema
 
 **Status:** Complete — all acceptance criteria below are met, implemented on
-`feat/bulk-upload-category-parent-compat`, open as
-[PR #8](https://github.com/iguliaev/moneylens-converter-rs/pull/8), pending
-merge.
+`feat/bulk-upload-category-parent-compat` and merged via
+[PR #8](https://github.com/iguliaev/moneylens-converter-rs/pull/8).
 
 **Context**: `moneylens/docs/api/bulk-upload.md` was updated to add a `parent` field
 on `CategoryInput`, used to express category hierarchy. This plan brings
