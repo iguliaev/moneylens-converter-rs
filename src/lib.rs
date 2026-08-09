@@ -10,13 +10,13 @@ use spreadsheet_ods::{self};
 
 pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
     let workbook = spreadsheet_ods::read_ods(&opts.input).expect("Failed to read ODS file");
-    println!("Workbook has {} sheets", workbook.num_sheets());
+    log::info!("Workbook has {} sheets", workbook.num_sheets());
 
     let selected_month = opts.month;
     let mut payload_builder = payload::PayloadBuilder::default();
 
     for sheet in workbook.iter_sheets() {
-        println!("Sheet: {}", sheet.name());
+        log::info!("Sheet: {}", sheet.name());
 
         if parsers::save::can_parse(sheet) {
             let transactions =

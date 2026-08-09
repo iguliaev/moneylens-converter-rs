@@ -43,12 +43,15 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
 
         // Extract and validate required fields
         let Some(amount) = utils::extract_amount(sheet, row_idx, COL_AMOUNT) else {
-            eprintln!("Warning: Skipping row {row_idx} - missing amount");
+            log::warn!("[{}] Skipping row {row_idx} - missing amount", sheet.name());
             continue;
         };
 
         let Some(category) = utils::extract_text(sheet, row_idx, COL_CATEGORY) else {
-            eprintln!("Warning: Skipping row {row_idx} - missing category");
+            log::warn!(
+                "[{}] Skipping row {row_idx} - missing category",
+                sheet.name()
+            );
             continue;
         };
 
@@ -58,8 +61,9 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
         let tag = utils::extract_text(sheet, row_idx, COL_TAGS);
         let annotation = utils::extract_annotation(sheet, row_idx, COL_AMOUNT);
 
-        println!(
-            "Date: {date}, Amount: {amount}, Category: {category}, Bank Account: {bank_account}, Tags: {tag:?}, Annotation: {annotation:?}",
+        log::debug!(
+            "[{}] row {row_idx}: Date: {date}, Amount: {amount}, Category: {category}, Bank Account: {bank_account}, Tags: {tag:?}, Annotation: {annotation:?}",
+            sheet.name()
         );
 
         let tags: Vec<String> = tag.into_iter().collect();

@@ -41,7 +41,10 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
                 break;
             }
 
-            eprintln!("Warning: Skipping row {row_idx} - missing category");
+            log::warn!(
+                "[{}] Skipping row {row_idx} - missing category",
+                sheet.name()
+            );
 
             continue;
         };
@@ -52,8 +55,9 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
 
         let annotation = utils::extract_annotation(sheet, row_idx, COL_AMOUNT);
 
-        println!(
-            "Date: {date}, Category: {category}, Amount: {amount}, Annotation: {annotation:?}"
+        log::debug!(
+            "[{}] row {row_idx}: Date: {date}, Category: {category}, Amount: {amount}, Annotation: {annotation:?}",
+            sheet.name()
         );
 
         let transaction = Transaction {
