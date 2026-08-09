@@ -44,19 +44,25 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
 
         // Extract and validate required fields
         let Some(amount) = utils::extract_amount(sheet, row_idx, COL_AMOUNT) else {
-            eprintln!("Warning: Skipping row {row_idx} - missing amount");
+            log::warn!("[{}] Skipping row {row_idx} - missing amount", sheet.name());
             continue;
         };
 
         let Some(category) = utils::extract_text(sheet, row_idx, COL_CATEGORY) else {
-            eprintln!("Warning: Skipping row {row_idx} - missing category");
+            log::warn!(
+                "[{}] Skipping row {row_idx} - missing category",
+                sheet.name()
+            );
             continue;
         };
 
         // Extract optional fields
         let notes = utils::extract_text(sheet, row_idx, COL_NOTES);
 
-        println!("Date: {date}, Amount: {amount}, Category: {category}, Notes: {notes:?}",);
+        log::debug!(
+            "[{}] row {row_idx}: Date: {date}, Amount: {amount}, Category: {category}, Notes: {notes:?}",
+            sheet.name()
+        );
 
         let transaction = Transaction {
             date,

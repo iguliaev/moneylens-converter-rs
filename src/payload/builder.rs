@@ -133,16 +133,16 @@ impl PayloadBuilder {
                     tx.category = format!("{parent}/{name}");
                 }
                 CategorySplit::Multipath => {
-                    eprintln!(
-                        "Warning: category \"{}\" has more than one level of nesting; \
+                    log::warn!(
+                        "category \"{}\" has more than one level of nesting; \
                          multi-level category paths are not supported, skipping category \
                          entry for this transaction",
                         tx.category
                     );
                 }
                 CategorySplit::Empty => {
-                    eprintln!(
-                        "Warning: category \"{}\" has no usable name after trimming; \
+                    log::warn!(
+                        "category \"{}\" has no usable name after trimming; \
                          skipping category entry for this transaction",
                         tx.category
                     );
