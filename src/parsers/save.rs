@@ -16,7 +16,7 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
     // 2025-02-09	|1,000.00. |Other	|
 
     const EMPTY_DATE_THRESHOLD: usize = 5;
-    const BANK_ACCOUNT_NAME: &str = "Default Account";
+    const BANK_ACCOUNT_NAME: &str = "Monzo";
     const FIRST_DATA_ROW: u32 = 2;
     const MAX_ROWS: u32 = 1000;
 
