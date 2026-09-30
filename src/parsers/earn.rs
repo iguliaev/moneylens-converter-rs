@@ -23,7 +23,7 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
     const DATE_ROW: u32 = 1;
     const DATE_COL: u32 = 3;
 
-    const DEFAULT_BANK_ACCOUNT_NAME: &str = "Default Account";
+    const DEFAULT_BANK_ACCOUNT_NAME: &str = "Barclays";
 
     let mut transactions = Vec::new();
 
