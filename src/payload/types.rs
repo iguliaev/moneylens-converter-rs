@@ -8,6 +8,17 @@ pub enum TransactionType {
     Earn,
 }
 
+impl std::fmt::Display for TransactionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            TransactionType::Spend => "spend",
+            TransactionType::Save => "save",
+            TransactionType::Earn => "earn",
+        };
+        write!(f, "{s}")
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Category {
     pub name: String,

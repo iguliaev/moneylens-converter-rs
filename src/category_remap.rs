@@ -1,3 +1,4 @@
+use crate::payload::builder::{CategorySplit, split_category};
 use crate::payload::types::{Transaction, TransactionType};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -46,11 +47,14 @@ impl Error for InvalidRemapEntry {}
 /// ```
 ///
 /// `from`/`to` are trimmed of surrounding whitespace. Rejects (as an error
-/// naming the offending entry) a blank `from`/`to`, `from == to`, and two
-/// entries sharing the same `(type, from)` — all of these would otherwise
-/// be silently useless or ambiguous. An unrecognized key anywhere in the
-/// file (e.g. a typo'd `[[remaps]]` table) is also rejected rather than
-/// quietly parsing as zero entries.
+/// naming the offending entry) a blank `from`/`to`, `from == to`, two
+/// entries sharing the same `(type, from)`, and a `to` that isn't a plain
+/// leaf name or a single `"Parent/Child"` level (anything `PayloadBuilder`
+/// would otherwise reject downstream as `Multipath`/`Empty`) — all of these
+/// would otherwise be silently useless, ambiguous, or only discovered later
+/// as a confusing upload error. An unrecognized key anywhere in the file
+/// (e.g. a typo'd `[[remaps]]` table) is also rejected rather than quietly
+/// parsing as zero entries.
 pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read category remap file {}: {e}", path.display()))?;
@@ -76,16 +80,13 @@ pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
     for entry in &entries {
         if entry.from.is_empty() {
             return Err(Box::new(InvalidRemapEntry {
-                description: format!(
-                    "\"from\" is blank for type \"{:?}\"",
-                    entry.transaction_type
-                ),
+                description: format!("\"from\" is blank for type \"{}\"", entry.transaction_type),
             }));
         }
         if entry.to.is_empty() {
             return Err(Box::new(InvalidRemapEntry {
                 description: format!(
-                    "\"to\" is blank for type \"{:?}\", from \"{}\"",
+                    "\"to\" is blank for type \"{}\", from \"{}\"",
                     entry.transaction_type, entry.from
                 ),
             }));
@@ -93,15 +94,34 @@ pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
         if entry.from == entry.to {
             return Err(Box::new(InvalidRemapEntry {
                 description: format!(
-                    "\"from\" and \"to\" are both \"{}\" for type \"{:?}\" — this entry is a no-op",
+                    "\"from\" and \"to\" are both \"{}\" for type \"{}\" — this entry is a no-op",
                     entry.from, entry.transaction_type
                 ),
             }));
         }
+        match split_category(&entry.to) {
+            CategorySplit::Multipath => {
+                return Err(Box::new(InvalidRemapEntry {
+                    description: format!(
+                        "\"to\" \"{}\" for type \"{}\", from \"{}\" has more than one level of nesting — categories support at most one parent/child level",
+                        entry.to, entry.transaction_type, entry.from
+                    ),
+                }));
+            }
+            CategorySplit::Empty => {
+                return Err(Box::new(InvalidRemapEntry {
+                    description: format!(
+                        "\"to\" for type \"{}\", from \"{}\" has no usable category name after trimming each side of \"/\"",
+                        entry.transaction_type, entry.from
+                    ),
+                }));
+            }
+            CategorySplit::Root(_) | CategorySplit::Nested { .. } => {}
+        }
         if !seen.insert((&entry.transaction_type, &entry.from)) {
             return Err(Box::new(InvalidRemapEntry {
                 description: format!(
-                    "duplicate entry for type \"{:?}\", from \"{}\"",
+                    "duplicate entry for type \"{}\", from \"{}\"",
                     entry.transaction_type, entry.from
                 ),
             }));
@@ -139,7 +159,7 @@ pub fn apply(transactions: Vec<Transaction>, entries: &[RemapEntry]) -> Vec<Tran
                 entry.transaction_type == transaction.transaction_type && entry.from == category
             }) {
                 log::info!(
-                    "Remapped category \"{}\" -> \"{}\" for {:?} transaction on {}",
+                    "Remapped category \"{}\" -> \"{}\" for {} transaction on {}",
                     entry.from,
                     entry.to,
                     transaction.transaction_type,
@@ -324,6 +344,60 @@ mod tests {
         std::fs::remove_file(&path).expect("temp remap file should be removed");
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn to_with_more_than_one_nesting_level_is_an_error() {
+        let path = write_temp_toml(
+            "multipath-to",
+            r#"
+            [[remap]]
+            type = "spend"
+            from = "Utilities"
+            to = "Bills/Utilities/Electricity"
+            "#,
+        );
+
+        let result = load(&path);
+        std::fs::remove_file(&path).expect("temp remap file should be removed");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn to_that_is_only_a_slash_is_an_error() {
+        let path = write_temp_toml(
+            "empty-to-slash",
+            r#"
+            [[remap]]
+            type = "spend"
+            from = "Utilities"
+            to = "/"
+            "#,
+        );
+
+        let result = load(&path);
+        std::fs::remove_file(&path).expect("temp remap file should be removed");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn to_with_exactly_one_nesting_level_is_allowed() {
+        let path = write_temp_toml(
+            "nested-to",
+            r#"
+            [[remap]]
+            type = "spend"
+            from = "Utilities"
+            to = "Utilities/Other"
+            "#,
+        );
+
+        let entries = load(&path).expect("remap file should parse");
+        std::fs::remove_file(&path).expect("temp remap file should be removed");
+
+        assert_eq!(entries[0].to, "Utilities/Other");
     }
 
     #[test]
