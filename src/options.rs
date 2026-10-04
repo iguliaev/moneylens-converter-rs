@@ -11,6 +11,8 @@ pub struct Options {
     pub output: Option<std::path::PathBuf>,
     #[arg(short = 'm', long, value_parser = clap::value_parser!(u8).range(1..=12))]
     pub month: Option<u8>,
+    #[arg(long)]
+    pub remap: Option<std::path::PathBuf>,
 }
 
 #[cfg(test)]
@@ -45,5 +47,27 @@ mod tests {
 
         let err = result.err().expect("month 13 should produce an error");
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn remap_defaults_to_none() {
+        let opts = Options::try_parse_from(["moneylens-converter-rs", "--input", "input.ods"])
+            .expect("options without --remap should parse");
+
+        assert_eq!(opts.remap, None);
+    }
+
+    #[test]
+    fn parses_remap_path() {
+        let opts = Options::try_parse_from([
+            "moneylens-converter-rs",
+            "--input",
+            "input.ods",
+            "--remap",
+            "remap.toml",
+        ])
+        .expect("--remap should parse");
+
+        assert_eq!(opts.remap, Some(std::path::PathBuf::from("remap.toml")));
     }
 }

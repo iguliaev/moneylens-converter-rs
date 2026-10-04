@@ -32,7 +32,7 @@ impl From<&super::types::Category> for CategoryKey {
 /// The result of splitting a transaction's category string, mirroring the
 /// API's own `"Parent/Child"` rule for `TransactionInput.category` (split on
 /// the first `/`, each side trimmed).
-enum CategorySplit {
+pub(crate) enum CategorySplit {
     /// No `/`, or a `/` split where one side trims down to nothing (e.g.
     /// `"Bills"`, `"Bills/  "`, or `"  /Bills"`) — a plain root-level
     /// category using whichever side is non-empty.
@@ -51,7 +51,7 @@ enum CategorySplit {
     Empty,
 }
 
-fn split_category(category: &str) -> CategorySplit {
+pub(crate) fn split_category(category: &str) -> CategorySplit {
     let Some((parent, child)) = category.split_once('/') else {
         let name = category.trim().to_string();
         return if name.is_empty() {

@@ -1,9 +1,11 @@
 use std::error::Error;
 
+pub mod category_remap;
 pub mod options;
 pub mod parsers;
 pub mod payload;
 
+use category_remap::RemapEntry;
 use options::Options;
 use payload::types::Transaction;
 use spreadsheet_ods::{self};
@@ -13,6 +15,10 @@ pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
     log::info!("Workbook has {} sheets", workbook.num_sheets());
 
     let selected_month = opts.month;
+    let remap_entries: Vec<RemapEntry> = match &opts.remap {
+        Some(path) => category_remap::load(path)?,
+        None => Vec::new(),
+    };
     let mut payload_builder = payload::PayloadBuilder::default();
 
     for sheet in workbook.iter_sheets() {
@@ -21,15 +27,20 @@ pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
         if parsers::save::can_parse(sheet) {
             let transactions =
                 filter_transactions_by_month(parsers::save::parse(sheet), selected_month);
+            let transactions = category_remap::apply(transactions, &remap_entries);
             payload_builder = payload_builder.add_transactions(transactions);
         }
 
         if parsers::utils::sheet_matches_month_selection(sheet.name(), selected_month) {
             if parsers::earn::can_parse(sheet) {
-                payload_builder = payload_builder.add_transactions(parsers::earn::parse(sheet));
+                let transactions =
+                    category_remap::apply(parsers::earn::parse(sheet), &remap_entries);
+                payload_builder = payload_builder.add_transactions(transactions);
             }
             if parsers::spend::can_parse(sheet) {
-                payload_builder = payload_builder.add_transactions(parsers::spend::parse(sheet));
+                let transactions =
+                    category_remap::apply(parsers::spend::parse(sheet), &remap_entries);
+                payload_builder = payload_builder.add_transactions(transactions);
             }
         }
     }
@@ -121,6 +132,7 @@ mod tests {
             input: PathBuf::from("tests/data/savings_example.ods"),
             output: Some(output_path.clone()),
             month: Some(1),
+            remap: None,
         })
         .expect("run should succeed");
 
@@ -148,5 +160,70 @@ mod tests {
                 .iter()
                 .all(|transaction| transaction.tags.is_empty())
         );
+    }
+
+    #[test]
+    fn run_applies_category_remap_end_to_end() {
+        let output_path = temp_output_path("category-remap");
+        let remap_path = std::env::temp_dir().join(format!(
+            "moneylens-category-remap-e2e-{}.toml",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        ));
+        fs::write(
+            &remap_path,
+            r#"
+            [[remap.category]]
+            type = "spend"
+            from = "Utilities"
+            to = "Utilities/Other"
+            "#,
+        )
+        .expect("writing temp remap file should succeed");
+
+        run(Options {
+            input: PathBuf::from("tests/data/spend_earn_transactions_example.ods"),
+            output: Some(output_path.clone()),
+            month: None,
+            remap: Some(remap_path.clone()),
+        })
+        .expect("run should succeed");
+
+        let json = fs::read_to_string(&output_path).expect("output json should be written");
+        fs::remove_file(&output_path).expect("temporary output file should be removed");
+        fs::remove_file(&remap_path).expect("temporary remap file should be removed");
+
+        let payload: Payload = serde_json::from_str(&json).expect("payload should deserialize");
+
+        assert!(
+            payload
+                .transactions
+                .iter()
+                .all(|transaction| transaction.category != "Utilities"),
+            "no transaction should keep the pre-remap bare \"Utilities\" category"
+        );
+        assert!(
+            payload
+                .transactions
+                .iter()
+                .any(|transaction| transaction.category == "Utilities/Other"),
+            "at least one transaction should have been remapped to \"Utilities/Other\""
+        );
+
+        let parent = payload
+            .categories
+            .iter()
+            .find(|category| category.name == "Utilities")
+            .expect("root \"Utilities\" category entry should exist");
+        assert_eq!(parent.parent, None);
+
+        let child = payload
+            .categories
+            .iter()
+            .find(|category| category.name == "Other")
+            .expect("\"Other\" child category entry should exist");
+        assert_eq!(child.parent, Some("Utilities".to_string()));
     }
 }
