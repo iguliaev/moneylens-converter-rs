@@ -1,9 +1,11 @@
 use std::error::Error;
 
+pub mod category_remap;
 pub mod options;
 pub mod parsers;
 pub mod payload;
 
+use category_remap::RemapEntry;
 use options::Options;
 use payload::types::Transaction;
 use spreadsheet_ods::{self};
@@ -13,23 +15,32 @@ pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
     log::info!("Workbook has {} sheets", workbook.num_sheets());
 
     let selected_month = opts.month;
+    let remap_entries: Vec<RemapEntry> = match &opts.category_remap {
+        Some(path) => category_remap::load(path)?,
+        None => Vec::new(),
+    };
     let mut payload_builder = payload::PayloadBuilder::default();
 
     for sheet in workbook.iter_sheets() {
         log::info!("Sheet: {}", sheet.name());
 
         if parsers::save::can_parse(sheet) {
-            let transactions =
+            let mut transactions =
                 filter_transactions_by_month(parsers::save::parse(sheet), selected_month);
+            category_remap::apply(&mut transactions, &remap_entries);
             payload_builder = payload_builder.add_transactions(transactions);
         }
 
         if parsers::utils::sheet_matches_month_selection(sheet.name(), selected_month) {
             if parsers::earn::can_parse(sheet) {
-                payload_builder = payload_builder.add_transactions(parsers::earn::parse(sheet));
+                let mut transactions = parsers::earn::parse(sheet);
+                category_remap::apply(&mut transactions, &remap_entries);
+                payload_builder = payload_builder.add_transactions(transactions);
             }
             if parsers::spend::can_parse(sheet) {
-                payload_builder = payload_builder.add_transactions(parsers::spend::parse(sheet));
+                let mut transactions = parsers::spend::parse(sheet);
+                category_remap::apply(&mut transactions, &remap_entries);
+                payload_builder = payload_builder.add_transactions(transactions);
             }
         }
     }
@@ -121,6 +132,7 @@ mod tests {
             input: PathBuf::from("tests/data/savings_example.ods"),
             output: Some(output_path.clone()),
             month: Some(1),
+            category_remap: None,
         })
         .expect("run should succeed");
 

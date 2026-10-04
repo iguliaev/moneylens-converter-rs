@@ -14,6 +14,9 @@ fn main() {
     if let Some(month) = opts.month {
         log::info!("Month: {month}");
     }
+    if let Some(ref path) = opts.category_remap {
+        log::info!("Category remap: {}", path.display());
+    }
 
     if let Err(e) = run(opts) {
         log::error!("{e}");
