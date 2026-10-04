@@ -124,27 +124,32 @@ pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
     Ok(entries)
 }
 
-/// Rewrites each transaction's `category` to the configured replacement when
-/// its (type, category) exactly matches a remap entry's (type, from) —
-/// after trimming surrounding whitespace from the transaction's category.
-/// Matching is otherwise an exact, case-sensitive string comparison. Logs an
-/// info line for each transaction actually rewritten.
-pub fn apply(transactions: &mut [Transaction], entries: &[RemapEntry]) {
-    for transaction in transactions {
-        let category = transaction.category.trim();
-        if let Some(entry) = entries.iter().find(|entry| {
-            entry.transaction_type == transaction.transaction_type && entry.from == category
-        }) {
-            log::info!(
-                "Remapped category \"{}\" -> \"{}\" for {:?} transaction on {}",
-                entry.from,
-                entry.to,
-                transaction.transaction_type,
-                transaction.date
-            );
-            transaction.category = entry.to.clone();
-        }
-    }
+/// Maps each transaction to one with its `category` rewritten to the
+/// configured replacement when its (type, category) exactly matches a
+/// remap entry's (type, from) — after trimming surrounding whitespace from
+/// the transaction's category. Matching is otherwise an exact,
+/// case-sensitive string comparison. Logs an info line for each transaction
+/// actually rewritten.
+pub fn apply(transactions: Vec<Transaction>, entries: &[RemapEntry]) -> Vec<Transaction> {
+    transactions
+        .into_iter()
+        .map(|mut transaction| {
+            let category = transaction.category.trim();
+            if let Some(entry) = entries.iter().find(|entry| {
+                entry.transaction_type == transaction.transaction_type && entry.from == category
+            }) {
+                log::info!(
+                    "Remapped category \"{}\" -> \"{}\" for {:?} transaction on {}",
+                    entry.from,
+                    entry.to,
+                    transaction.transaction_type,
+                    transaction.date
+                );
+                transaction.category = entry.to.clone();
+            }
+            transaction
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -375,8 +380,8 @@ mod tests {
             to: "Utilities/Other".to_string(),
         }];
 
-        let mut transactions = vec![transaction(TransactionType::Spend, "Utilities")];
-        apply(&mut transactions, &entries);
+        let transactions = vec![transaction(TransactionType::Spend, "Utilities")];
+        let transactions = apply(transactions, &entries);
 
         assert_eq!(transactions[0].category, "Utilities/Other");
     }
@@ -389,8 +394,8 @@ mod tests {
             to: "Utilities/Other".to_string(),
         }];
 
-        let mut transactions = vec![transaction(TransactionType::Spend, "  Utilities  ")];
-        apply(&mut transactions, &entries);
+        let transactions = vec![transaction(TransactionType::Spend, "  Utilities  ")];
+        let transactions = apply(transactions, &entries);
 
         assert_eq!(transactions[0].category, "Utilities/Other");
     }
@@ -403,8 +408,8 @@ mod tests {
             to: "Utilities/Other".to_string(),
         }];
 
-        let mut transactions = vec![transaction(TransactionType::Spend, "Groceries")];
-        apply(&mut transactions, &entries);
+        let transactions = vec![transaction(TransactionType::Spend, "Groceries")];
+        let transactions = apply(transactions, &entries);
 
         assert_eq!(transactions[0].category, "Groceries");
     }
@@ -417,8 +422,8 @@ mod tests {
             to: "Utilities/Other".to_string(),
         }];
 
-        let mut transactions = vec![transaction(TransactionType::Earn, "Utilities")];
-        apply(&mut transactions, &entries);
+        let transactions = vec![transaction(TransactionType::Earn, "Utilities")];
+        let transactions = apply(transactions, &entries);
 
         assert_eq!(transactions[0].category, "Utilities");
     }
@@ -438,13 +443,13 @@ mod tests {
             },
         ];
 
-        let mut transactions = vec![
+        let transactions = vec![
             transaction(TransactionType::Spend, "Utilities"),
             transaction(TransactionType::Spend, "Groceries"),
             transaction(TransactionType::Earn, "Utilities"),
             transaction(TransactionType::Spend, "Transport"),
         ];
-        apply(&mut transactions, &entries);
+        let transactions = apply(transactions, &entries);
 
         assert_eq!(transactions[0].category, "Utilities/Other");
         assert_eq!(transactions[1].category, "Groceries");

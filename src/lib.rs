@@ -25,21 +25,21 @@ pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
         log::info!("Sheet: {}", sheet.name());
 
         if parsers::save::can_parse(sheet) {
-            let mut transactions =
+            let transactions =
                 filter_transactions_by_month(parsers::save::parse(sheet), selected_month);
-            category_remap::apply(&mut transactions, &remap_entries);
+            let transactions = category_remap::apply(transactions, &remap_entries);
             payload_builder = payload_builder.add_transactions(transactions);
         }
 
         if parsers::utils::sheet_matches_month_selection(sheet.name(), selected_month) {
             if parsers::earn::can_parse(sheet) {
-                let mut transactions = parsers::earn::parse(sheet);
-                category_remap::apply(&mut transactions, &remap_entries);
+                let transactions =
+                    category_remap::apply(parsers::earn::parse(sheet), &remap_entries);
                 payload_builder = payload_builder.add_transactions(transactions);
             }
             if parsers::spend::can_parse(sheet) {
-                let mut transactions = parsers::spend::parse(sheet);
-                category_remap::apply(&mut transactions, &remap_entries);
+                let transactions =
+                    category_remap::apply(parsers::spend::parse(sheet), &remap_entries);
                 payload_builder = payload_builder.add_transactions(transactions);
             }
         }
