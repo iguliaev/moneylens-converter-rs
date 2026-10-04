@@ -12,7 +12,7 @@ pub struct Options {
     #[arg(short = 'm', long, value_parser = clap::value_parser!(u8).range(1..=12))]
     pub month: Option<u8>,
     #[arg(long)]
-    pub category_remap: Option<std::path::PathBuf>,
+    pub remap: Option<std::path::PathBuf>,
 }
 
 #[cfg(test)]
@@ -50,27 +50,24 @@ mod tests {
     }
 
     #[test]
-    fn category_remap_defaults_to_none() {
+    fn remap_defaults_to_none() {
         let opts = Options::try_parse_from(["moneylens-converter-rs", "--input", "input.ods"])
-            .expect("options without --category-remap should parse");
+            .expect("options without --remap should parse");
 
-        assert_eq!(opts.category_remap, None);
+        assert_eq!(opts.remap, None);
     }
 
     #[test]
-    fn parses_category_remap_path() {
+    fn parses_remap_path() {
         let opts = Options::try_parse_from([
             "moneylens-converter-rs",
             "--input",
             "input.ods",
-            "--category-remap",
+            "--remap",
             "remap.toml",
         ])
-        .expect("--category-remap should parse");
+        .expect("--remap should parse");
 
-        assert_eq!(
-            opts.category_remap,
-            Some(std::path::PathBuf::from("remap.toml"))
-        );
+        assert_eq!(opts.remap, Some(std::path::PathBuf::from("remap.toml")));
     }
 }

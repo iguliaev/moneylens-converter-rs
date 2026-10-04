@@ -19,7 +19,17 @@ pub struct RemapEntry {
 #[serde(deny_unknown_fields)]
 struct RemapFile {
     #[serde(default)]
-    remap: Vec<RemapEntry>,
+    remap: RemapSection,
+}
+
+/// One sub-table per remappable entity. Only `category` exists today;
+/// future entities (e.g. `bank_account`, `tag`) would be added here as
+/// siblings, each its own `[[remap.<entity>]]` array.
+#[derive(Deserialize, Debug, Default)]
+#[serde(deny_unknown_fields)]
+struct RemapSection {
+    #[serde(default)]
+    category: Vec<RemapEntry>,
 }
 
 #[derive(Debug)]
@@ -35,12 +45,12 @@ impl fmt::Display for InvalidRemapEntry {
 
 impl Error for InvalidRemapEntry {}
 
-/// Loads a `--category-remap` TOML file: a `[[remap]]` array of tables, each
-/// with a `type` (`spend`/`save`/`earn`), `from`, and `to` bare category
-/// name, e.g.:
+/// Loads a `--remap` TOML file: a `[[remap.category]]` array of tables,
+/// each with a `type` (`spend`/`save`/`earn`), `from`, and `to` bare
+/// category name, e.g.:
 ///
 /// ```toml
-/// [[remap]]
+/// [[remap.category]]
 /// type = "spend"
 /// from = "Utilities"
 /// to = "Utilities/Other"
@@ -53,21 +63,18 @@ impl Error for InvalidRemapEntry {}
 /// would otherwise reject downstream as `Multipath`/`Empty`) — all of these
 /// would otherwise be silently useless, ambiguous, or only discovered later
 /// as a confusing upload error. An unrecognized key anywhere in the file
-/// (e.g. a typo'd `[[remaps]]` table) is also rejected rather than quietly
-/// parsing as zero entries.
+/// (e.g. a typo'd `[[remap.categories]]` table) is also rejected rather
+/// than quietly parsing as zero entries.
 pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
     let contents = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read category remap file {}: {e}", path.display()))?;
+        .map_err(|e| format!("failed to read remap file {}: {e}", path.display()))?;
 
-    let file: RemapFile = toml::from_str(&contents).map_err(|e| {
-        format!(
-            "failed to parse category remap file {}: {e}",
-            path.display()
-        )
-    })?;
+    let file: RemapFile = toml::from_str(&contents)
+        .map_err(|e| format!("failed to parse remap file {}: {e}", path.display()))?;
 
     let entries: Vec<RemapEntry> = file
         .remap
+        .category
         .into_iter()
         .map(|entry| RemapEntry {
             transaction_type: entry.transaction_type,
@@ -130,7 +137,7 @@ pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
 
     if entries.is_empty() {
         log::warn!(
-            "Category remap file {} contains no [[remap]] entries — no categories will be remapped",
+            "Remap file {} contains no [[remap.category]] entries — no categories will be remapped",
             path.display()
         );
     } else {
@@ -210,7 +217,7 @@ mod tests {
         let path = write_temp_toml(
             "loads-entries",
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "Utilities"
             to = "Utilities/Other"
@@ -235,7 +242,7 @@ mod tests {
         let path = write_temp_toml(
             "trims-whitespace",
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "  Utilities  "
             to = "  Utilities/Other  "
@@ -274,12 +281,33 @@ mod tests {
 
     #[test]
     fn unknown_table_name_is_an_error_not_an_empty_list() {
-        // A typo'd table name ("remaps" instead of "remap") must not
-        // silently parse as zero entries.
+        // A typo'd top-level table name ("remaps" instead of "remap") must
+        // not silently parse as zero entries.
         let path = write_temp_toml(
             "unknown-table",
             r#"
-            [[remaps]]
+            [[remaps.category]]
+            type = "spend"
+            from = "Utilities"
+            to = "Utilities/Other"
+            "#,
+        );
+
+        let result = load(&path);
+        std::fs::remove_file(&path).expect("temp remap file should be removed");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn unknown_entity_name_is_an_error_not_an_empty_list() {
+        // A typo'd entity name ("categories" instead of "category") under
+        // the correct top-level "remap" table must not silently parse as
+        // zero entries either.
+        let path = write_temp_toml(
+            "unknown-entity",
+            r#"
+            [[remap.categories]]
             type = "spend"
             from = "Utilities"
             to = "Utilities/Other"
@@ -297,7 +325,7 @@ mod tests {
         let path = write_temp_toml(
             "blank-from",
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "   "
             to = "Utilities/Other"
@@ -315,7 +343,7 @@ mod tests {
         let path = write_temp_toml(
             "blank-to",
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "Utilities"
             to = "   "
@@ -333,7 +361,7 @@ mod tests {
         let path = write_temp_toml(
             "noop-entry",
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "Utilities"
             to = "Utilities"
@@ -351,7 +379,7 @@ mod tests {
         let path = write_temp_toml(
             "multipath-to",
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "Utilities"
             to = "Bills/Utilities/Electricity"
@@ -369,7 +397,7 @@ mod tests {
         let path = write_temp_toml(
             "empty-to-slash",
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "Utilities"
             to = "/"
@@ -387,7 +415,7 @@ mod tests {
         let path = write_temp_toml(
             "nested-to",
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "Utilities"
             to = "Utilities/Other"
@@ -405,12 +433,12 @@ mod tests {
         let path = write_temp_toml(
             "duplicate-entry",
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "Utilities"
             to = "Utilities/Electricity"
 
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "Utilities"
             to = "Utilities/Water"
@@ -428,12 +456,12 @@ mod tests {
         let path = write_temp_toml(
             "same-from-different-type",
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "Other"
             to = "Other/Misc"
 
-            [[remap]]
+            [[remap.category]]
             type = "earn"
             from = "Other"
             to = "Other/Bonus"

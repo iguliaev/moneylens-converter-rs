@@ -15,7 +15,7 @@ pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
     log::info!("Workbook has {} sheets", workbook.num_sheets());
 
     let selected_month = opts.month;
-    let remap_entries: Vec<RemapEntry> = match &opts.category_remap {
+    let remap_entries: Vec<RemapEntry> = match &opts.remap {
         Some(path) => category_remap::load(path)?,
         None => Vec::new(),
     };
@@ -132,7 +132,7 @@ mod tests {
             input: PathBuf::from("tests/data/savings_example.ods"),
             output: Some(output_path.clone()),
             month: Some(1),
-            category_remap: None,
+            remap: None,
         })
         .expect("run should succeed");
 
@@ -175,7 +175,7 @@ mod tests {
         fs::write(
             &remap_path,
             r#"
-            [[remap]]
+            [[remap.category]]
             type = "spend"
             from = "Utilities"
             to = "Utilities/Other"
@@ -187,7 +187,7 @@ mod tests {
             input: PathBuf::from("tests/data/spend_earn_transactions_example.ods"),
             output: Some(output_path.clone()),
             month: None,
-            category_remap: Some(remap_path.clone()),
+            remap: Some(remap_path.clone()),
         })
         .expect("run should succeed");
 
