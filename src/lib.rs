@@ -20,12 +20,6 @@ pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
         None => Vec::new(),
     };
     let mut payload_builder = payload::PayloadBuilder::default();
-    let mut remap_entry_matched = vec![false; remap_entries.len()];
-    let mut record_matches = |matched: Vec<bool>| {
-        for (slot, this_call) in remap_entry_matched.iter_mut().zip(matched) {
-            *slot = *slot || this_call;
-        }
-    };
 
     for sheet in workbook.iter_sheets() {
         log::info!("Sheet: {}", sheet.name());
@@ -33,31 +27,21 @@ pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
         if parsers::save::can_parse(sheet) {
             let mut transactions =
                 filter_transactions_by_month(parsers::save::parse(sheet), selected_month);
-            record_matches(category_remap::apply(&mut transactions, &remap_entries));
+            category_remap::apply(&mut transactions, &remap_entries);
             payload_builder = payload_builder.add_transactions(transactions);
         }
 
         if parsers::utils::sheet_matches_month_selection(sheet.name(), selected_month) {
             if parsers::earn::can_parse(sheet) {
                 let mut transactions = parsers::earn::parse(sheet);
-                record_matches(category_remap::apply(&mut transactions, &remap_entries));
+                category_remap::apply(&mut transactions, &remap_entries);
                 payload_builder = payload_builder.add_transactions(transactions);
             }
             if parsers::spend::can_parse(sheet) {
                 let mut transactions = parsers::spend::parse(sheet);
-                record_matches(category_remap::apply(&mut transactions, &remap_entries));
+                category_remap::apply(&mut transactions, &remap_entries);
                 payload_builder = payload_builder.add_transactions(transactions);
             }
-        }
-    }
-
-    for (entry, matched) in remap_entries.iter().zip(remap_entry_matched) {
-        if !matched {
-            log::warn!(
-                "Category remap entry for type \"{:?}\", from \"{}\" never matched any transaction",
-                entry.transaction_type,
-                entry.from
-            );
         }
     }
 
