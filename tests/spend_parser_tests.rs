@@ -5,7 +5,7 @@ fn test_parse_earnings() {
     let workbook = spreadsheet_ods::read_ods("tests/data/spend_earn_transactions_example.ods")
         .expect("Failed to read ODS file");
     let sheet = workbook.sheet(0);
-    let transactions = parsers::spend::parse(sheet);
+    let transactions = parsers::spend::parse(sheet, &[]);
 
     assert_eq!(9, transactions.len(), "Expected 9 transactions parsed");
 
