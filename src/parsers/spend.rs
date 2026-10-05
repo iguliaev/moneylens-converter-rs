@@ -1,12 +1,13 @@
 use super::utils;
 use crate::payload::types::{Transaction, TransactionType};
+use crate::remap::BankAccountRemapEntry;
 use spreadsheet_ods::Sheet;
 
 pub fn can_parse(sheet: &Sheet) -> bool {
     utils::is_month(sheet.name())
 }
 
-pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
+pub fn parse(sheet: &Sheet, bank_account_remap: &[BankAccountRemapEntry]) -> Vec<Transaction> {
     assert!(
         utils::is_month(sheet.name()),
         "Expected month name, got: {}",
@@ -56,7 +57,8 @@ pub fn parse(sheet: &Sheet) -> Vec<Transaction> {
         };
 
         let bank_account_symbol = utils::extract_text(sheet, row_idx, COL_BANK_ACCOUNT);
-        let bank_account = utils::bank_account_symbol_to_name(bank_account_symbol);
+        let bank_account =
+            utils::bank_account_symbol_to_name(bank_account_symbol, bank_account_remap);
 
         let tag = utils::extract_text(sheet, row_idx, COL_TAGS);
         let annotation = utils::extract_annotation(sheet, row_idx, COL_AMOUNT);

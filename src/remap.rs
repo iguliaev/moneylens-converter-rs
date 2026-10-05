@@ -15,6 +15,17 @@ pub struct RemapEntry {
     pub to: String,
 }
 
+/// A bank account remap entry. Unlike `RemapEntry`, this has no `type` —
+/// a bank account isn't scoped by transaction type in the data model, so
+/// one entry applies regardless of whether the account is used on a
+/// spend/save/earn transaction.
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BankAccountRemapEntry {
+    pub from: String,
+    pub to: String,
+}
+
 #[derive(Deserialize, Debug, Default)]
 #[serde(deny_unknown_fields)]
 struct RemapFile {
@@ -22,14 +33,23 @@ struct RemapFile {
     remap: RemapSection,
 }
 
-/// One sub-table per remappable entity. Only `category` exists today;
-/// future entities (e.g. `bank_account`, `tag`) would be added here as
-/// siblings, each its own `[[remap.<entity>]]` array.
+/// One sub-table per remappable entity. `category` and `bank_account`
+/// exist today; a future entity (e.g. `tag`) would be added here as a
+/// sibling, its own `[[remap.<entity>]]` array.
 #[derive(Deserialize, Debug, Default)]
 #[serde(deny_unknown_fields)]
 struct RemapSection {
     #[serde(default)]
     category: Vec<RemapEntry>,
+    #[serde(default)]
+    bank_account: Vec<BankAccountRemapEntry>,
+}
+
+/// The validated, loaded contents of a `--remap` file, one list per entity.
+#[derive(Debug, Default)]
+pub struct RemapConfig {
+    pub category: Vec<RemapEntry>,
+    pub bank_account: Vec<BankAccountRemapEntry>,
 }
 
 #[derive(Debug)]
@@ -39,42 +59,14 @@ struct InvalidRemapEntry {
 
 impl fmt::Display for InvalidRemapEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid category remap entry: {}", self.description)
+        write!(f, "invalid remap entry: {}", self.description)
     }
 }
 
 impl Error for InvalidRemapEntry {}
 
-/// Loads a `--remap` TOML file: a `[[remap.category]]` array of tables,
-/// each with a `type` (`spend`/`save`/`earn`), `from`, and `to` bare
-/// category name, e.g.:
-///
-/// ```toml
-/// [[remap.category]]
-/// type = "spend"
-/// from = "Utilities"
-/// to = "Utilities/Other"
-/// ```
-///
-/// `from`/`to` are trimmed of surrounding whitespace. Rejects (as an error
-/// naming the offending entry) a blank `from`/`to`, `from == to`, two
-/// entries sharing the same `(type, from)`, and a `to` that isn't a plain
-/// leaf name or a single `"Parent/Child"` level (anything `PayloadBuilder`
-/// would otherwise reject downstream as `Multipath`/`Empty`) — all of these
-/// would otherwise be silently useless, ambiguous, or only discovered later
-/// as a confusing upload error. An unrecognized key anywhere in the file
-/// (e.g. a typo'd `[[remap.categories]]` table) is also rejected rather
-/// than quietly parsing as zero entries.
-pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read remap file {}: {e}", path.display()))?;
-
-    let file: RemapFile = toml::from_str(&contents)
-        .map_err(|e| format!("failed to parse remap file {}: {e}", path.display()))?;
-
-    let entries: Vec<RemapEntry> = file
-        .remap
-        .category
+fn validate_category_entries(entries: Vec<RemapEntry>) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
+    let entries: Vec<RemapEntry> = entries
         .into_iter()
         .map(|entry| RemapEntry {
             transaction_type: entry.transaction_type,
@@ -87,13 +79,16 @@ pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
     for entry in &entries {
         if entry.from.is_empty() {
             return Err(Box::new(InvalidRemapEntry {
-                description: format!("\"from\" is blank for type \"{}\"", entry.transaction_type),
+                description: format!(
+                    "category \"from\" is blank for type \"{}\"",
+                    entry.transaction_type
+                ),
             }));
         }
         if entry.to.is_empty() {
             return Err(Box::new(InvalidRemapEntry {
                 description: format!(
-                    "\"to\" is blank for type \"{}\", from \"{}\"",
+                    "category \"to\" is blank for type \"{}\", from \"{}\"",
                     entry.transaction_type, entry.from
                 ),
             }));
@@ -101,7 +96,7 @@ pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
         if entry.from == entry.to {
             return Err(Box::new(InvalidRemapEntry {
                 description: format!(
-                    "\"from\" and \"to\" are both \"{}\" for type \"{}\" — this entry is a no-op",
+                    "category \"from\" and \"to\" are both \"{}\" for type \"{}\" — this entry is a no-op",
                     entry.from, entry.transaction_type
                 ),
             }));
@@ -110,7 +105,7 @@ pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
             CategorySplit::Multipath => {
                 return Err(Box::new(InvalidRemapEntry {
                     description: format!(
-                        "\"to\" \"{}\" for type \"{}\", from \"{}\" has more than one level of nesting — categories support at most one parent/child level",
+                        "category \"to\" \"{}\" for type \"{}\", from \"{}\" has more than one level of nesting — categories support at most one parent/child level",
                         entry.to, entry.transaction_type, entry.from
                     ),
                 }));
@@ -118,7 +113,7 @@ pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
             CategorySplit::Empty => {
                 return Err(Box::new(InvalidRemapEntry {
                     description: format!(
-                        "\"to\" for type \"{}\", from \"{}\" has no usable category name after trimming each side of \"/\"",
+                        "category \"to\" for type \"{}\", from \"{}\" has no usable category name after trimming each side of \"/\"",
                         entry.transaction_type, entry.from
                     ),
                 }));
@@ -128,27 +123,125 @@ pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
         if !seen.insert((&entry.transaction_type, &entry.from)) {
             return Err(Box::new(InvalidRemapEntry {
                 description: format!(
-                    "duplicate entry for type \"{}\", from \"{}\"",
+                    "duplicate category entry for type \"{}\", from \"{}\"",
                     entry.transaction_type, entry.from
                 ),
             }));
         }
     }
 
-    if entries.is_empty() {
+    Ok(entries)
+}
+
+fn validate_bank_account_entries(
+    entries: Vec<BankAccountRemapEntry>,
+) -> Result<Vec<BankAccountRemapEntry>, Box<dyn Error>> {
+    let entries: Vec<BankAccountRemapEntry> = entries
+        .into_iter()
+        .map(|entry| BankAccountRemapEntry {
+            from: entry.from.trim().to_string(),
+            to: entry.to.trim().to_string(),
+        })
+        .collect();
+
+    let mut seen = HashSet::new();
+    for entry in &entries {
+        if entry.from.is_empty() {
+            return Err(Box::new(InvalidRemapEntry {
+                description: "bank_account \"from\" is blank".to_string(),
+            }));
+        }
+        if entry.to.is_empty() {
+            return Err(Box::new(InvalidRemapEntry {
+                description: format!("bank_account \"to\" is blank, from \"{}\"", entry.from),
+            }));
+        }
+        if entry.from == entry.to {
+            return Err(Box::new(InvalidRemapEntry {
+                description: format!(
+                    "bank_account \"from\" and \"to\" are both \"{}\" — this entry is a no-op",
+                    entry.from
+                ),
+            }));
+        }
+        if !seen.insert(&entry.from) {
+            return Err(Box::new(InvalidRemapEntry {
+                description: format!("duplicate bank_account entry for from \"{}\"", entry.from),
+            }));
+        }
+    }
+
+    Ok(entries)
+}
+
+/// Loads a `--remap` TOML file: `[[remap.category]]` and
+/// `[[remap.bank_account]]` arrays of tables.
+///
+/// `[[remap.category]]` entries have a `type` (`spend`/`save`/`earn`),
+/// `from`, and `to` category name — either a bare leaf, or
+/// `"Parent/Child"` for one level of nesting, e.g.:
+///
+/// ```toml
+/// [[remap.category]]
+/// type = "spend"
+/// from = "Utilities"
+/// to = "Utilities/Other"
+/// ```
+///
+/// Rejects (as an error naming the offending entry) a blank `from`/`to`, a
+/// `to` that isn't a plain leaf name or a single `"Parent/Child"` level
+/// (anything `PayloadBuilder` would otherwise reject downstream as
+/// `Multipath`/`Empty`), `from == to`, and two entries sharing the same
+/// `(type, from)` — all of these would otherwise be silently useless,
+/// ambiguous, or only discovered later as a confusing upload error.
+///
+/// `[[remap.bank_account]]` entries have just a `from`/`to` (no `type` —
+/// bank accounts aren't scoped by transaction type), e.g.:
+///
+/// ```toml
+/// [[remap.bank_account]]
+/// from = "X"
+/// to = "AmEx"
+/// ```
+///
+/// Validated the same way (blank `from`/`to`, `from == to`, duplicate
+/// `from`), minus the category-specific nesting-depth check, since bank
+/// account names have no parent/child structure. `spend.rs`'s bank account
+/// symbol resolution uses the literal string `"(empty)"` as `from` to mean
+/// "the spreadsheet cell had no symbol at all" — this isn't a blank string,
+/// so it needs no special handling here; it's just another valid `from`.
+///
+/// An unrecognized key anywhere in the file (e.g. a typo'd
+/// `[[remap.categories]]` table) is also rejected rather than quietly
+/// parsing as zero entries.
+pub fn load(path: &Path) -> Result<RemapConfig, Box<dyn Error>> {
+    let contents = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read remap file {}: {e}", path.display()))?;
+
+    let file: RemapFile = toml::from_str(&contents)
+        .map_err(|e| format!("failed to parse remap file {}: {e}", path.display()))?;
+
+    let category = validate_category_entries(file.remap.category)?;
+    let bank_account = validate_bank_account_entries(file.remap.bank_account)?;
+
+    if category.is_empty() && bank_account.is_empty() {
         log::warn!(
-            "Remap file {} contains no [[remap.category]] entries — no categories will be remapped",
+            "Remap file {} contains no [[remap.category]] or [[remap.bank_account]] entries — nothing will be remapped",
             path.display()
         );
     } else {
         log::info!(
-            "Loaded {} category remap entries from {}",
-            entries.len(),
+            "Loaded {} category and {} bank_account remap entries from {}",
+            category.len(),
+            bank_account.len(),
             path.display()
         );
     }
 
-    Ok(entries)
+    Ok(RemapConfig {
+        category,
+        bank_account,
+    })
 }
 
 /// Maps each transaction to one with its `category` rewritten to the
@@ -157,7 +250,10 @@ pub fn load(path: &Path) -> Result<Vec<RemapEntry>, Box<dyn Error>> {
 /// the transaction's category. Matching is otherwise an exact,
 /// case-sensitive string comparison. Logs an info line for each transaction
 /// actually rewritten.
-pub fn apply(transactions: Vec<Transaction>, entries: &[RemapEntry]) -> Vec<Transaction> {
+pub fn apply_categories(
+    transactions: Vec<Transaction>,
+    entries: &[RemapEntry],
+) -> Vec<Transaction> {
     transactions
         .into_iter()
         .map(|mut transaction| {
@@ -201,9 +297,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "moneylens-category-remap-{test_name}-{unique_suffix}.toml"
-        ))
+        std::env::temp_dir().join(format!("moneylens-remap-{test_name}-{unique_suffix}.toml"))
     }
 
     fn write_temp_toml(test_name: &str, contents: &str) -> std::path::PathBuf {
@@ -213,9 +307,9 @@ mod tests {
     }
 
     #[test]
-    fn loads_remap_entries_from_toml() {
+    fn loads_category_entries_from_toml() {
         let path = write_temp_toml(
-            "loads-entries",
+            "loads-category-entries",
             r#"
             [[remap.category]]
             type = "spend"
@@ -224,17 +318,52 @@ mod tests {
             "#,
         );
 
-        let entries = load(&path).expect("remap file should parse");
+        let config = load(&path).expect("remap file should parse");
         std::fs::remove_file(&path).expect("temp remap file should be removed");
 
         assert_eq!(
-            entries,
+            config.category,
             vec![RemapEntry {
                 transaction_type: TransactionType::Spend,
                 from: "Utilities".to_string(),
                 to: "Utilities/Other".to_string(),
             }]
         );
+        assert!(config.bank_account.is_empty());
+    }
+
+    #[test]
+    fn loads_bank_account_entries_from_toml() {
+        let path = write_temp_toml(
+            "loads-bank-account-entries",
+            r#"
+            [[remap.bank_account]]
+            from = "X"
+            to = "AmEx"
+
+            [[remap.bank_account]]
+            from = "(empty)"
+            to = "Monzo"
+            "#,
+        );
+
+        let config = load(&path).expect("remap file should parse");
+        std::fs::remove_file(&path).expect("temp remap file should be removed");
+
+        assert_eq!(
+            config.bank_account,
+            vec![
+                BankAccountRemapEntry {
+                    from: "X".to_string(),
+                    to: "AmEx".to_string(),
+                },
+                BankAccountRemapEntry {
+                    from: "(empty)".to_string(),
+                    to: "Monzo".to_string(),
+                },
+            ]
+        );
+        assert!(config.category.is_empty());
     }
 
     #[test]
@@ -249,23 +378,23 @@ mod tests {
             "#,
         );
 
-        let entries = load(&path).expect("remap file should parse");
+        let config = load(&path).expect("remap file should parse");
         std::fs::remove_file(&path).expect("temp remap file should be removed");
 
-        assert_eq!(entries[0].from, "Utilities");
-        assert_eq!(entries[0].to, "Utilities/Other");
+        assert_eq!(config.category[0].from, "Utilities");
+        assert_eq!(config.category[0].to, "Utilities/Other");
     }
 
     #[test]
     fn missing_file_is_an_error() {
         let result = load(&std::path::PathBuf::from(
-            "/nonexistent/moneylens-category-remap.toml",
+            "/nonexistent/moneylens-remap.toml",
         ));
 
         let err = result.expect_err("missing file should fail to load");
         assert!(
             err.to_string()
-                .contains("/nonexistent/moneylens-category-remap.toml")
+                .contains("/nonexistent/moneylens-remap.toml")
         );
     }
 
@@ -321,9 +450,9 @@ mod tests {
     }
 
     #[test]
-    fn blank_from_is_an_error() {
+    fn blank_category_from_is_an_error() {
         let path = write_temp_toml(
-            "blank-from",
+            "blank-category-from",
             r#"
             [[remap.category]]
             type = "spend"
@@ -339,9 +468,9 @@ mod tests {
     }
 
     #[test]
-    fn blank_to_is_an_error() {
+    fn blank_category_to_is_an_error() {
         let path = write_temp_toml(
-            "blank-to",
+            "blank-category-to",
             r#"
             [[remap.category]]
             type = "spend"
@@ -357,9 +486,9 @@ mod tests {
     }
 
     #[test]
-    fn from_equal_to_is_an_error() {
+    fn category_from_equal_to_is_an_error() {
         let path = write_temp_toml(
-            "noop-entry",
+            "noop-category-entry",
             r#"
             [[remap.category]]
             type = "spend"
@@ -375,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn to_with_more_than_one_nesting_level_is_an_error() {
+    fn category_to_with_more_than_one_nesting_level_is_an_error() {
         let path = write_temp_toml(
             "multipath-to",
             r#"
@@ -393,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn to_that_is_only_a_slash_is_an_error() {
+    fn category_to_that_is_only_a_slash_is_an_error() {
         let path = write_temp_toml(
             "empty-to-slash",
             r#"
@@ -411,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn to_with_exactly_one_nesting_level_is_allowed() {
+    fn category_to_with_exactly_one_nesting_level_is_allowed() {
         let path = write_temp_toml(
             "nested-to",
             r#"
@@ -422,16 +551,16 @@ mod tests {
             "#,
         );
 
-        let entries = load(&path).expect("remap file should parse");
+        let config = load(&path).expect("remap file should parse");
         std::fs::remove_file(&path).expect("temp remap file should be removed");
 
-        assert_eq!(entries[0].to, "Utilities/Other");
+        assert_eq!(config.category[0].to, "Utilities/Other");
     }
 
     #[test]
-    fn duplicate_type_and_from_is_an_error() {
+    fn duplicate_category_type_and_from_is_an_error() {
         let path = write_temp_toml(
-            "duplicate-entry",
+            "duplicate-category-entry",
             r#"
             [[remap.category]]
             type = "spend"
@@ -452,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn same_from_under_different_types_is_allowed() {
+    fn same_category_from_under_different_types_is_allowed() {
         let path = write_temp_toml(
             "same-from-different-type",
             r#"
@@ -468,10 +597,99 @@ mod tests {
             "#,
         );
 
-        let entries = load(&path).expect("remap file should parse");
+        let config = load(&path).expect("remap file should parse");
         std::fs::remove_file(&path).expect("temp remap file should be removed");
 
-        assert_eq!(entries.len(), 2);
+        assert_eq!(config.category.len(), 2);
+    }
+
+    #[test]
+    fn blank_bank_account_from_is_an_error() {
+        let path = write_temp_toml(
+            "blank-bank-account-from",
+            r#"
+            [[remap.bank_account]]
+            from = "   "
+            to = "AmEx"
+            "#,
+        );
+
+        let result = load(&path);
+        std::fs::remove_file(&path).expect("temp remap file should be removed");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn blank_bank_account_to_is_an_error() {
+        let path = write_temp_toml(
+            "blank-bank-account-to",
+            r#"
+            [[remap.bank_account]]
+            from = "X"
+            to = "   "
+            "#,
+        );
+
+        let result = load(&path);
+        std::fs::remove_file(&path).expect("temp remap file should be removed");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn bank_account_from_equal_to_is_an_error() {
+        let path = write_temp_toml(
+            "noop-bank-account-entry",
+            r#"
+            [[remap.bank_account]]
+            from = "AmEx"
+            to = "AmEx"
+            "#,
+        );
+
+        let result = load(&path);
+        std::fs::remove_file(&path).expect("temp remap file should be removed");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn duplicate_bank_account_from_is_an_error() {
+        let path = write_temp_toml(
+            "duplicate-bank-account-entry",
+            r#"
+            [[remap.bank_account]]
+            from = "X"
+            to = "AmEx"
+
+            [[remap.bank_account]]
+            from = "X"
+            to = "Amex Platinum"
+            "#,
+        );
+
+        let result = load(&path);
+        std::fs::remove_file(&path).expect("temp remap file should be removed");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn bank_account_empty_sentinel_is_a_valid_from() {
+        let path = write_temp_toml(
+            "empty-sentinel",
+            r#"
+            [[remap.bank_account]]
+            from = "(empty)"
+            to = "Monzo"
+            "#,
+        );
+
+        let config = load(&path).expect("remap file should parse");
+        std::fs::remove_file(&path).expect("temp remap file should be removed");
+
+        assert_eq!(config.bank_account[0].from, "(empty)");
     }
 
     #[test]
@@ -483,7 +701,7 @@ mod tests {
         }];
 
         let transactions = vec![transaction(TransactionType::Spend, "Utilities")];
-        let transactions = apply(transactions, &entries);
+        let transactions = apply_categories(transactions, &entries);
 
         assert_eq!(transactions[0].category, "Utilities/Other");
     }
@@ -497,7 +715,7 @@ mod tests {
         }];
 
         let transactions = vec![transaction(TransactionType::Spend, "  Utilities  ")];
-        let transactions = apply(transactions, &entries);
+        let transactions = apply_categories(transactions, &entries);
 
         assert_eq!(transactions[0].category, "Utilities/Other");
     }
@@ -511,7 +729,7 @@ mod tests {
         }];
 
         let transactions = vec![transaction(TransactionType::Spend, "Groceries")];
-        let transactions = apply(transactions, &entries);
+        let transactions = apply_categories(transactions, &entries);
 
         assert_eq!(transactions[0].category, "Groceries");
     }
@@ -525,7 +743,7 @@ mod tests {
         }];
 
         let transactions = vec![transaction(TransactionType::Earn, "Utilities")];
-        let transactions = apply(transactions, &entries);
+        let transactions = apply_categories(transactions, &entries);
 
         assert_eq!(transactions[0].category, "Utilities");
     }
@@ -551,7 +769,7 @@ mod tests {
             transaction(TransactionType::Earn, "Utilities"),
             transaction(TransactionType::Spend, "Transport"),
         ];
-        let transactions = apply(transactions, &entries);
+        let transactions = apply_categories(transactions, &entries);
 
         assert_eq!(transactions[0].category, "Utilities/Other");
         assert_eq!(transactions[1].category, "Groceries");

@@ -1,6 +1,12 @@
+use crate::remap::BankAccountRemapEntry;
 use once_cell::sync::Lazy;
 use spreadsheet_ods::Sheet;
 use std::collections::HashMap;
+
+/// The `from` value a `[[remap.bank_account]]` entry uses to mean "the
+/// spreadsheet cell had no bank account symbol at all" — not a blank
+/// string (which is rejected as invalid), just another valid `from`.
+const EMPTY_SYMBOL_SENTINEL: &str = "(empty)";
 
 const MONTH_NAMES: [&str; 12] = [
     "January",
@@ -109,7 +115,20 @@ fn extract_month_number(date: &str) -> Option<u8> {
     }
 }
 
-pub(super) fn bank_account_symbol_to_name(symbol: Option<String>) -> String {
+pub(super) fn bank_account_symbol_to_name(
+    symbol: Option<String>,
+    remap: &[BankAccountRemapEntry],
+) -> String {
+    let lookup_key = symbol.as_deref().unwrap_or(EMPTY_SYMBOL_SENTINEL);
+    if let Some(entry) = remap.iter().find(|entry| entry.from == lookup_key) {
+        log::info!(
+            "Remapped bank account \"{}\" -> \"{}\"",
+            entry.from,
+            entry.to
+        );
+        return entry.to.clone();
+    }
+
     match symbol {
         Some(ref name) => BANK_ACCOUNT_MAP
             .get(name.as_str())
@@ -122,6 +141,65 @@ pub(super) fn bank_account_symbol_to_name(symbol: Option<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bank_account_symbol_falls_back_to_hardcoded_map_with_no_remap() {
+        assert_eq!(
+            bank_account_symbol_to_name(Some("X".to_string()), &[]),
+            "AmEx"
+        );
+        assert_eq!(bank_account_symbol_to_name(None, &[]), "NatWest");
+        assert_eq!(
+            bank_account_symbol_to_name(Some("Z".to_string()), &[]),
+            "Unknown"
+        );
+    }
+
+    #[test]
+    fn bank_account_remap_overrides_a_known_letter() {
+        let remap = vec![BankAccountRemapEntry {
+            from: "X".to_string(),
+            to: "Amex Platinum".to_string(),
+        }];
+
+        assert_eq!(
+            bank_account_symbol_to_name(Some("X".to_string()), &remap),
+            "Amex Platinum"
+        );
+    }
+
+    #[test]
+    fn bank_account_remap_falls_back_for_an_unmatched_letter() {
+        let remap = vec![BankAccountRemapEntry {
+            from: "X".to_string(),
+            to: "Amex Platinum".to_string(),
+        }];
+
+        assert_eq!(
+            bank_account_symbol_to_name(Some("B".to_string()), &remap),
+            "Barclays"
+        );
+    }
+
+    #[test]
+    fn bank_account_remap_overrides_the_empty_cell_default() {
+        let remap = vec![BankAccountRemapEntry {
+            from: "(empty)".to_string(),
+            to: "Monzo".to_string(),
+        }];
+
+        assert_eq!(bank_account_symbol_to_name(None, &remap), "Monzo");
+    }
+
+    #[test]
+    fn bank_account_remap_without_an_empty_entry_still_defaults_to_natwest() {
+        let remap = vec![BankAccountRemapEntry {
+            from: "X".to_string(),
+            to: "Amex Platinum".to_string(),
+        }];
+
+        assert_eq!(bank_account_symbol_to_name(None, &remap), "NatWest");
+    }
 
     #[test]
     fn resolves_month_name_from_number() {
